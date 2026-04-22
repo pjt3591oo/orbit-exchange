@@ -1,0 +1,29 @@
+{
+  "name": "@orbit/workers",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "pnpm db:generate && tsx watch src/main.ts",
+    "build": "pnpm db:generate && tsc -p tsconfig.json",
+    "start": "node dist/main.js",
+    "db:generate": "prisma generate --schema ../api/prisma/schema.prisma",
+    "lint": "echo '(workers) no lint yet'"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.670.0",
+    "@aws-sdk/client-sns": "^3.670.0",
+    "@orbit/shared": "workspace:*",
+    "@prisma/client": "^5.22.0",
+    "decimal.js": "^10.4.3",
+    "ioredis": "^5.4.1",
+    "kafkajs": "^2.2.4",
+    "pino": "^9.5.0",
+    "pino-pretty": "^11.3.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.9.0",
+    "prisma": "^5.22.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.6.3"
+  }
+}

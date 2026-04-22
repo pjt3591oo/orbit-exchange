@@ -1,0 +1,78 @@
+/* ORBIT Exchange — light-theme fintech tokens (Korean convention: up=red, down=blue) */
+:root {
+  --bg: #f6f7f9;
+  --bg-alt: #fafbfc;
+  --card: #ffffff;
+  --border: #e8ebef;
+  --border-soft: #eef0f3;
+  --hover: #f2f4f7;
+  --text: #0e1116;
+  --text-2: #4a5561;
+  --text-3: #7d8793;
+  --text-4: #b1b8c2;
+
+  /* Korean convention */
+  --up: #e12d39;
+  --up-bg: rgba(225, 45, 57, 0.08);
+  --up-bg-strong: rgba(225, 45, 57, 0.14);
+  --down: #1966d2;
+  --down-bg: rgba(25, 102, 210, 0.08);
+  --down-bg-strong: rgba(25, 102, 210, 0.14);
+
+  --brand: oklch(0.55 0.18 260);
+  --brand-soft: oklch(0.96 0.02 260);
+  --brand-ink: oklch(0.35 0.14 260);
+
+  --warn: #c28500;
+  --warn-bg: rgba(194, 133, 0, 0.1);
+  --ok: #1e8e5a;
+  --ok-bg: rgba(30, 142, 90, 0.1);
+
+  --font-body: "Pretendard Variable", Pretendard, -apple-system, BlinkMacSystemFont,
+    "Apple SD Gothic Neo", "Noto Sans KR", system-ui, sans-serif;
+  --font-num: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+  --radius: 10px;
+  --radius-sm: 6px;
+  --row-h: 36px;
+
+  color-scheme: light;
+  font-family: var(--font-body);
+}
+
+* { box-sizing: border-box; }
+
+html, body, #root {
+  margin: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
+}
+
+a { color: inherit; text-decoration: none; }
+
+button {
+  font-family: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+
+input, select {
+  font-family: inherit;
+  color: var(--text);
+  outline: none;
+}
+
+.mono {
+  font-family: var(--font-num);
+  font-variant-numeric: tabular-nums;
+}
+
+.muted { color: var(--text-3); }
+.up-text { color: var(--up); }
+.down-text { color: var(--down); }
+
+@keyframes orbitFade { from { opacity: 0 } to { opacity: 1 } }

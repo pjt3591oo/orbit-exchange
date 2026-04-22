@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>ORBIT 거래소</title>
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable.min.css" />
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap" />
+
+<style>
+  :root {
+    --font-num: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    --font-body: "Pretendard Variable", Pretendard, -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", system-ui, sans-serif;
+  }
+  html, body {
+    margin: 0; padding: 0; font-family: var(--font-body);
+    background: #f0eee9; color: #0E1116;
+    -webkit-font-smoothing: antialiased;
+  }
+  * { box-sizing: border-box; }
+  button { font-family: inherit; }
+  input { font-family: inherit; }
+  @keyframes orbitFade { from { opacity: 0 } to { opacity: 1 } }
+</style>
+
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel" src="tokens.jsx"></script>
+<script type="text/babel" src="chart.jsx"></script>
+<script type="text/babel" src="design-canvas.jsx"></script>
+<script type="text/babel" src="ios-frame.jsx"></script>
+<script type="text/babel" src="desktop.jsx"></script>
+<script type="text/babel" src="orderbook.jsx"></script>
+<script type="text/babel" src="modals.jsx"></script>
+<script type="text/babel" src="mobile.jsx"></script>
+
+<script type="text/babel">
+const { useState, useEffect, useMemo } = React;
+
+const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
+  "convention": "korean",
+  "density": "comfortable",
+  "bookLayout": "vertical",
+  "accent": "teal"
+}/*EDITMODE-END*/;
+
+// Build tokens reactively from tweak state
+function makeTokens({ convention, accent }) {
+  const T = { ...TOKENS_DEFAULT };
+  if (convention === 'western') {
+    T.up = '#1E8E5A'; T.upBg = 'rgba(30,142,90,0.08)'; T.upBgStrong = 'rgba(30,142,90,0.14)';
+    T.down = '#E12D39'; T.downBg = 'rgba(225,45,57,0.08)'; T.downBgStrong = 'rgba(225,45,57,0.14)';
+  }
+  if (accent === 'amber') {
+    T.brand = 'oklch(0.62 0.16 60)';
+    T.brandSoft = 'oklch(0.96 0.03 60)';
+    T.brandInk = 'oklch(0.42 0.14 60)';
+  } else if (accent === 'teal') {
+    T.brand = 'oklch(0.55 0.12 200)';
+    T.brandSoft = 'oklch(0.96 0.02 200)';
+    T.brandInk = 'oklch(0.38 0.10 200)';
+  } else if (accent === 'ink') {
+    T.brand = '#0E1116';
+    T.brandSoft = '#F2F4F7';
+    T.brandInk = '#0E1116';
+  }
+  return T;
+}
+
+function DesktopFrame({ T, density, bookLayout }) {
+  const [selectedSym, setSelectedSym] = useState('ASTR');
+  const [pickedPrice, setPickedPrice] = useState(null);
+  const [modal, setModal] = useState(null);
+  const [loggedIn, setLoggedIn] = useState(true);
+
+  const market = MARKETS.find(m => m.sym === selectedSym);
+  const candles = useMemo(() => buildCandles(
+    selectedSym.split('').reduce((a,c) => a + c.charCodeAt(0), 7),
+    96, market.price
+  ), [selectedSym]);
+  const book = useMemo(() => buildOrderBook(market.price, 3), [selectedSym]);
+  const trades = useMemo(() => buildTape(5, market.price), [selectedSym]);
+
+  const high24 = Math.max(...candles.map(c => c.high));
+  const low24 = Math.min(...candles.map(c => c.low));
+  const volKRW = market.vol24;
+
+  // Responsive-ish column: sidebar | chart(+tape below) | book | form
+  return (
+    <div style={{
+      width: '100%', height: '100%', background: T.bg,
+      fontFamily: 'var(--font-body)', color: T.text,
+      display: 'flex', flexDirection: 'column', position: 'relative',
+      overflow: 'hidden',
+    }}>
+      <TopBar T={T} loggedIn={loggedIn}
+        onOpenLogin={() => setModal('login')}
+        onOpenPortfolio={() => setModal('portfolio')}
+        onOpenDeposit={() => setModal('deposit')}
+        onOpenStaking={() => setModal('staking')}
+        onOpenNotices={() => setModal('notices')} />
+
+      <SymbolStrip T={T} market={market} high24={high24} low24={low24} volKRW={volKRW} />
+
+      <div style={{
+        flex: 1, display: 'grid',
+        gridTemplateColumns: '260px 1fr 320px 300px',
+        gap: 1, background: T.border, minHeight: 0,
+      }}>
+        <MarketList T={T} markets={MARKETS} selected={selectedSym}
+          onSelect={setSelectedSym} density={density} />
+
+        <div style={{ display: 'grid', gridTemplateRows: '1fr 200px',
+          gap: 1, background: T.border, minHeight: 0 }}>
+          <ChartPanel T={T} market={market} candles={candles} />
+          <TradeTape T={T} trades={trades} />
+        </div>
+
+        <OrderBook T={T} book={book} mid={market.price}
+          onPickPrice={setPickedPrice} layout={bookLayout} />
+
+        <OrderForm T={T} market={market} pickedPrice={pickedPrice} />
+      </div>
+
+      <div style={{ height: 260, borderTop: `1px solid ${T.border}`, flexShrink: 0 }}>
+        <BottomTabs T={T} holdings={HOLDINGS} markets={MARKETS} />
+      </div>
+
+      {modal === 'login' && <LoginModal T={T} onClose={() => setModal(null)}
+        onLogin={() => setLoggedIn(true)} />}
+      {modal === 'portfolio' && <PortfolioModal T={T} holdings={HOLDINGS}
+        markets={MARKETS} onClose={() => setModal(null)} />}
+      {modal === 'deposit' && <DepositModal T={T} onClose={() => setModal(null)} />}
+      {modal === 'staking' && <StakingModal T={T} onClose={() => setModal(null)} />}
+      {modal === 'notices' && <NoticesModal T={T} onClose={() => setModal(null)} />}
+    </div>
+  );
+}
+
+function MobileFrame({ T }) {
+  const market = MARKETS[0];
+  const candles = useMemo(() => buildCandles(9, 96, market.price), []);
+  const book = useMemo(() => buildOrderBook(market.price, 3), []);
+  return (
+    <IOSDevice width={390} height={780} title="ORBIT">
+      <MobileApp T={T} market={market} candles={candles} book={book} />
+    </IOSDevice>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
+// Tweaks panel
+// ─────────────────────────────────────────────────────────────
+function TweaksPanel({ state, setState, visible }) {
+  if (!visible) return null;
+  const rows = [
+    { k: 'convention', label: '상승/하락 색상', opts: [['korean','빨강=상승 (한국)'], ['western','초록=상승 (서양)']] },
+    { k: 'density', label: '행 밀도', opts: [['comfortable','여유'], ['compact','빽빽']] },
+    { k: 'bookLayout', label: '호가창', opts: [['vertical','세로 (상하)'], ['horizontal','가로 (좌우)']] },
+    { k: 'accent', label: '브랜드 컬러', opts: [['violet','Violet'], ['teal','Teal'], ['amber','Amber'], ['ink','Ink']] },
+  ];
+  return (
+    <div style={{
+      position: 'fixed', right: 20, bottom: 20, zIndex: 9999,
+      width: 280, background: '#fff', borderRadius: 12,
+      boxShadow: '0 16px 48px rgba(0,0,0,0.18), 0 0 0 1px rgba(0,0,0,0.06)',
+      fontFamily: 'var(--font-body)', overflow: 'hidden',
+    }}>
+      <div style={{
+        padding: '12px 14px', borderBottom: '1px solid #EEF0F3',
+        fontSize: 13, fontWeight: 700, color: '#0E1116',
+        display: 'flex', alignItems: 'center', gap: 8,
+      }}>
+        <span style={{ width: 8, height: 8, borderRadius: '50%', background: 'oklch(0.55 0.18 260)' }} />
+        Tweaks
+      </div>
+      <div style={{ padding: 14, display: 'flex', flexDirection: 'column', gap: 12 }}>
+        {rows.map(r => (
+          <div key={r.k}>
+            <div style={{ fontSize: 10.5, color: '#7D8793', fontWeight: 700,
+              letterSpacing: 0.3, marginBottom: 6, textTransform: 'uppercase' }}>
+              {r.label}
+            </div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+              {r.opts.map(([k, l]) => (
+                <button key={k} onClick={() => setState(s => ({ ...s, [r.k]: k }))} style={{
+                  border: `1px solid ${state[r.k] === k ? '#0E1116' : '#E8EBEF'}`,
+                  background: state[r.k] === k ? '#0E1116' : '#fff',
+                  color: state[r.k] === k ? '#fff' : '#4A5561',
+                  fontFamily: 'inherit', fontSize: 11.5, fontWeight: 600,
+                  padding: '6px 10px', borderRadius: 6, cursor: 'pointer',
+                }}>{l}</button>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function App() {
+  const [tweaks, setTweaks] = useState(TWEAK_DEFAULTS);
+  const [editMode, setEditMode] = useState(false);
+  const T = useMemo(() => makeTokens(tweaks), [tweaks]);
+
+  useEffect(() => {
+    const handler = (e) => {
+      if (!e.data || typeof e.data !== 'object') return;
+      if (e.data.type === '__activate_edit_mode') setEditMode(true);
+      if (e.data.type === '__deactivate_edit_mode') setEditMode(false);
+    };
+    window.addEventListener('message', handler);
+    window.parent.postMessage({ type: '__edit_mode_available' }, '*');
+    return () => window.removeEventListener('message', handler);
+  }, []);
+
+  useEffect(() => {
+    window.parent.postMessage({
+      type: '__edit_mode_set_keys', edits: tweaks,
+    }, '*');
+  }, [tweaks]);
+
+  return (
+    <>
+      <DesignCanvas>
+        <DCSection id="orbit" title="ORBIT 거래소"
+          subtitle="원화 현물 암호화폐 거래소 · 데스크탑 + 모바일 — 가상의 ORBIT 브랜드, 오리지널 심볼">
+
+          <DCArtboard id="desktop" label="데스크탑 · 트레이딩 뷰" width={1600} height={1060}>
+            <DesktopFrame T={T} density={tweaks.density} bookLayout={tweaks.bookLayout} />
+          </DCArtboard>
+
+          <DCArtboard id="mobile" label="모바일 · 거래" width={440} height={820}>
+            <div style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              width: '100%', height: '100%', background: '#f0eee9',
+            }}>
+              <MobileFrame T={T} />
+            </div>
+          </DCArtboard>
+        </DCSection>
+      </DesignCanvas>
+
+      <TweaksPanel state={tweaks} setState={setTweaks} visible={editMode} />
+    </>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+
+</body>
+</html>

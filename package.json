@@ -1,0 +1,29 @@
+{
+  "name": "orbit-exchange",
+  "version": "0.1.0",
+  "private": true,
+  "description": "ORBIT — a learning-oriented spot crypto exchange (NestJS + React + Postgres + Kafka + LocalStack)",
+  "packageManager": "pnpm@10.28.0",
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "scripts": {
+    "setup": "pnpm install && pnpm shared:build && pnpm infra:up && pnpm infra:wait && pnpm infra:bootstrap && pnpm db:migrate && pnpm db:seed",
+    "dev": "pnpm shared:build && pnpm -r --parallel --filter '!@orbit/shared' run dev",
+    "dev:api": "pnpm --filter @orbit/api dev",
+    "dev:workers": "pnpm --filter @orbit/workers dev",
+    "dev:web": "pnpm --filter @orbit/web dev",
+    "build": "pnpm -r run build",
+    "shared:build": "pnpm --filter @orbit/shared build",
+    "lint": "pnpm -r run lint",
+    "infra:up": "docker compose up -d",
+    "infra:down": "docker compose down",
+    "infra:reset": "docker compose down -v",
+    "infra:logs": "docker compose logs -f",
+    "infra:wait": "bash -c 'for i in {1..60}; do all=1; for c in orbit-postgres orbit-redis orbit-redpanda orbit-localstack; do h=$(docker inspect -f \"{{.State.Health.Status}}\" \"$c\" 2>/dev/null); [ \"$h\" = \"healthy\" ] || all=0; done; [ $all -eq 1 ] && { echo infra ready; exit 0; }; sleep 2; done; echo \"infra did not become healthy\"; exit 1'",
+    "infra:bootstrap": "bash infra/localstack/bootstrap.sh",
+    "db:migrate": "pnpm --filter @orbit/api run db:migrate",
+    "db:seed": "pnpm --filter @orbit/api run db:seed",
+    "db:reset": "pnpm --filter @orbit/api exec prisma migrate reset --force"
+  }
+}

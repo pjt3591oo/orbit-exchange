@@ -1,0 +1,137 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum OrderSide {
+  BID
+  ASK
+}
+
+enum OrderType {
+  LIMIT
+  MARKET
+}
+
+enum OrderStatus {
+  OPEN
+  PARTIAL
+  FILLED
+  CANCELLED
+  REJECTED
+}
+
+enum CandleInterval {
+  M1
+  M5
+  M15
+  H1
+  H4
+  D1
+}
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String
+  createdAt    DateTime @default(now())
+  wallets      Wallet[]
+  orders       Order[]
+}
+
+model Asset {
+  symbol   String   @id
+  name     String
+  decimals Int
+  wallets  Wallet[]
+}
+
+model Wallet {
+  id       String  @id @default(cuid())
+  userId   String
+  asset    String
+  balance  Decimal @default(0) @db.Decimal(28, 12)
+  locked   Decimal @default(0) @db.Decimal(28, 12)
+  user     User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  assetRef Asset   @relation(fields: [asset], references: [symbol])
+
+  @@unique([userId, asset])
+  @@index([userId])
+}
+
+model Market {
+  symbol      String  @id
+  baseAsset   String
+  quoteAsset  String
+  tickSize    Decimal @db.Decimal(28, 12)
+  stepSize    Decimal @db.Decimal(28, 12)
+  minNotional Decimal @db.Decimal(28, 12)
+  takerFeeBp  Int     @default(20)
+  makerFeeBp  Int     @default(10)
+  enabled     Boolean @default(true)
+  orders      Order[]
+  trades      Trade[]
+  candles     Candle[]
+}
+
+model Order {
+  id        BigInt      @id @default(autoincrement())
+  userId    String
+  market    String
+  side      OrderSide
+  type      OrderType
+  price     Decimal?    @db.Decimal(28, 12)
+  quantity  Decimal     @db.Decimal(28, 12)
+  leaveQty  Decimal     @db.Decimal(28, 12)
+  filledQty Decimal     @default(0) @db.Decimal(28, 12)
+  status    OrderStatus @default(OPEN)
+  createdAt DateTime    @default(now())
+  updatedAt DateTime    @updatedAt
+  user      User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  marketRef Market      @relation(fields: [market], references: [symbol])
+
+  @@index([userId, createdAt])
+  @@index([market, status, price])
+}
+
+model Trade {
+  id           BigInt    @id @default(autoincrement())
+  sequence     BigInt
+  market       String
+  price        Decimal   @db.Decimal(28, 12)
+  quantity     Decimal   @db.Decimal(28, 12)
+  makerOrderId BigInt
+  takerOrderId BigInt
+  makerSide    OrderSide
+  takerSide    OrderSide
+  makerUserId  String
+  takerUserId  String
+  makerFee     Decimal   @db.Decimal(28, 12)
+  takerFee     Decimal   @db.Decimal(28, 12)
+  createdAt    DateTime  @default(now())
+  marketRef    Market    @relation(fields: [market], references: [symbol])
+
+  @@index([market, createdAt])
+  @@index([makerOrderId])
+  @@index([takerOrderId])
+}
+
+model Candle {
+  id        BigInt         @id @default(autoincrement())
+  market    String
+  interval  CandleInterval
+  openTime  DateTime
+  open      Decimal        @db.Decimal(28, 12)
+  high      Decimal        @db.Decimal(28, 12)
+  low       Decimal        @db.Decimal(28, 12)
+  close     Decimal        @db.Decimal(28, 12)
+  volume    Decimal        @db.Decimal(28, 12)
+  marketRef Market         @relation(fields: [market], references: [symbol])
+
+  @@unique([market, interval, openTime])
+  @@index([market, interval, openTime])
+}
