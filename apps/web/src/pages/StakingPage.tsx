@@ -25,7 +25,7 @@ export function StakingPage() {
   const list = POOLS.filter((p) => (tab === 'featured' ? p.featured : true));
 
   return (
-    <div style={{ padding: 24, maxWidth: 960, margin: '0 auto' }}>
+    <div style={{ padding: 'clamp(12px, 3vw, 24px)', maxWidth: 960, margin: '0 auto' }}>
       <DemoBanner />
 
       <div
@@ -56,7 +56,8 @@ export function StakingPage() {
           overflow: 'hidden',
         }}
       >
-        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+        <div style={{ overflowX: 'auto' }}>
+        <table style={{ width: '100%', minWidth: 720, borderCollapse: 'collapse' }}>
           <thead>
             <tr>
               {['자산', 'APY', '락업', '최소 수량', 'TVL', ''].map((h, i) => (
@@ -153,6 +154,7 @@ export function StakingPage() {
             ))}
           </tbody>
         </table>
+        </div>
       </div>
     </div>
   );

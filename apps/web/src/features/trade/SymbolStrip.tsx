@@ -5,15 +5,23 @@ import { getMarketSocket } from '../../lib/ws';
 import { T } from '../../design/tokens';
 import { Tag } from '../../design/atoms';
 import { fmtAbbr, fmtNum, fmtPct, priceDigits } from '../../design/tokens';
+import { useBreakpoint } from '../../hooks/useBreakpoint';
 
 interface TradeRow { id: string; price: string; quantity: string; takerSide: 'BID' | 'ASK'; ts: number; }
 interface CandleRow { openTime: number; high: string; low: string; close: string; volume: string; }
 
-export function SymbolStrip({ symbol, baseAsset, quoteAsset }: {
+export function SymbolStrip({
+  symbol,
+  baseAsset,
+  quoteAsset,
+  onMarketButtonClick,
+}: {
   symbol: string;
   baseAsset: string;
   quoteAsset: string;
+  onMarketButtonClick?: () => void;
 }) {
+  const bp = useBreakpoint();
   const [lastPrice, setLastPrice] = useState<number | null>(null);
 
   const { data: trades } = useQuery({
@@ -55,7 +63,7 @@ export function SymbolStrip({ symbol, baseAsset, quoteAsset }: {
   const col = up ? T.up : T.down;
   const dig = priceDigits(lastPrice ?? 0);
 
-  const stats = [
+  const allStats = [
     { label: '24h 고가', value: high24 != null ? fmtNum(high24, dig) : '—' },
     { label: '24h 저가', value: low24 != null ? fmtNum(low24, dig) : '—' },
     {
@@ -67,20 +75,47 @@ export function SymbolStrip({ symbol, baseAsset, quoteAsset }: {
       value: vol24Quote != null ? `${quoteAsset === 'KRW' ? '₩' : ''}${fmtAbbr(vol24Quote)}` : '—',
     },
   ];
+  // Show fewer stats on narrow screens to keep the strip from wrapping.
+  const stats = bp === 'mobile' ? [] : bp === 'tablet' ? allStats.slice(0, 2) : allStats;
+  const priceFontSize = bp === 'mobile' ? 22 : 26;
 
   return (
     <div
       style={{
         display: 'flex',
         alignItems: 'center',
-        gap: 24,
-        padding: '12px 20px',
+        gap: bp === 'mobile' ? 12 : 24,
+        padding: bp === 'mobile' ? '10px 14px' : '12px 20px',
         borderBottom: `1px solid ${T.border}`,
         background: T.card,
         flexShrink: 0,
+        overflowX: 'auto',
       }}
     >
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+      {onMarketButtonClick && (
+        <button
+          onClick={onMarketButtonClick}
+          aria-label="마켓 목록"
+          style={{
+            width: 32,
+            height: 32,
+            border: `1px solid ${T.border}`,
+            background: T.card,
+            borderRadius: 6,
+            cursor: 'pointer',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            flexShrink: 0,
+            color: T.text2,
+            fontSize: 16,
+            lineHeight: 1,
+          }}
+        >
+          ☰
+        </button>
+      )}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
         <div
           style={{
             width: 30,
@@ -107,12 +142,12 @@ export function SymbolStrip({ symbol, baseAsset, quoteAsset }: {
         </div>
       </div>
 
-      <div style={{ display: 'flex', alignItems: 'baseline', gap: 10 }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexShrink: 0 }}>
         <span
           style={{
             fontFamily: 'var(--font-num)',
             fontVariantNumeric: 'tabular-nums',
-            fontSize: 26,
+            fontSize: priceFontSize,
             fontWeight: 700,
             color: col,
             letterSpacing: -0.5,
@@ -133,19 +168,21 @@ export function SymbolStrip({ symbol, baseAsset, quoteAsset }: {
         </span>
       </div>
 
-      <div style={{ display: 'flex', gap: 24, marginLeft: 8 }}>
-        {stats.map((s) => (
-          <div key={s.label} style={{ whiteSpace: 'nowrap' }}>
-            <div style={{ fontSize: 10.5, color: T.text3, letterSpacing: 0.3 }}>{s.label}</div>
-            <div
-              className="mono"
-              style={{ fontSize: 12.5, fontWeight: 600, color: T.text, marginTop: 2 }}
-            >
-              {s.value}
+      {stats.length > 0 && (
+        <div style={{ display: 'flex', gap: 24, marginLeft: 8 }}>
+          {stats.map((s) => (
+            <div key={s.label} style={{ whiteSpace: 'nowrap' }}>
+              <div style={{ fontSize: 10.5, color: T.text3, letterSpacing: 0.3 }}>{s.label}</div>
+              <div
+                className="mono"
+                style={{ fontSize: 12.5, fontWeight: 600, color: T.text, marginTop: 2 }}
+              >
+                {s.value}
+              </div>
             </div>
-          </div>
-        ))}
-      </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

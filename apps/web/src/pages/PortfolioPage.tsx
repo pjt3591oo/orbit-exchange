@@ -62,12 +62,12 @@ export function PortfolioPage() {
   }
 
   return (
-    <div style={{ padding: 24, maxWidth: 1040, margin: '0 auto' }}>
+    <div style={{ padding: 'clamp(12px, 3vw, 24px)', maxWidth: 1040, margin: '0 auto' }}>
       {/* Summary */}
       <div
         style={{
           display: 'grid',
-          gridTemplateColumns: 'repeat(3, 1fr)',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
           gap: 12,
           marginBottom: 14,
         }}
@@ -106,7 +106,8 @@ export function PortfolioPage() {
           <span style={{ fontSize: 15, fontWeight: 700 }}>보유 자산</span>
           <span style={{ fontSize: 11, color: T.text3 }}>실시간 · 5초 주기</span>
         </div>
-        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+        <div style={{ overflowX: 'auto' }}>
+        <table style={{ width: '100%', minWidth: 680, borderCollapse: 'collapse' }}>
           <thead>
             <tr>
               {['자산', '보유수량', '잠금', '현재가', '평가금액', '비중'].map((h, i) => (
@@ -180,6 +181,7 @@ export function PortfolioPage() {
             })}
           </tbody>
         </table>
+        </div>
       </div>
     </div>
   );

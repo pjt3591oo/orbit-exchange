@@ -327,6 +327,7 @@ function Assets() {
 
 const tableStyle: CSSProperties = {
   width: '100%',
+  minWidth: 640,
   borderCollapse: 'separate',
   borderSpacing: 0,
   fontFamily: 'inherit',

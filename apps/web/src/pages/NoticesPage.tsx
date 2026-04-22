@@ -68,7 +68,7 @@ export function NoticesPage() {
   const opened = openId ? NOTICES.find((n) => n.id === openId) ?? null : null;
 
   return (
-    <div style={{ padding: 24, maxWidth: 720, margin: '0 auto' }}>
+    <div style={{ padding: 'clamp(12px, 3vw, 24px)', maxWidth: 720, margin: '0 auto' }}>
       <div
         style={{
           background: T.card,

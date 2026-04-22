@@ -41,7 +41,7 @@ export function DepositWithdrawPage() {
   }
 
   return (
-    <div style={{ padding: 24, maxWidth: 560, margin: '0 auto' }}>
+    <div style={{ padding: 'clamp(12px, 3vw, 24px)', maxWidth: 560, margin: '0 auto' }}>
       <DemoBanner />
 
       <div
