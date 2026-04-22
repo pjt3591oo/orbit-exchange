@@ -3,7 +3,10 @@
 프로덕션 지향으로 설계한 학습용 스팟 암호화폐 거래소.
 자체 매칭엔진 ([`orderbook-match-engine`](https://www.npmjs.com/package/orderbook-match-engine)) + Kafka 이벤트 버스 + AWS(LocalStack) 로컬 에뮬레이트.
 
-> 설계 문서는 **[SYSTEM_DESIGN.md](./SYSTEM_DESIGN.md)** 참고.
+- **시스템 설계**: [SYSTEM_DESIGN.md](./SYSTEM_DESIGN.md)
+- **UI 디자인**: [Claude Design · ORBIT Exchange](https://claude.ai/design/p/38eb67ef-e881-468a-a0aa-4358fc5d317d?via=share&file=ORBIT+Exchange.html)
+  — Claude Design에서 만든 라이트테마 핀테크 시안. JSX 원본은 [design/](./design) 디렉토리에 함께 커밋되어 있고,
+  `apps/web` 은 그 토큰/레이아웃을 TypeScript로 이식한 구현입니다.
 
 ```
 apps/
