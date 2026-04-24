@@ -11,6 +11,8 @@
     "setup": "pnpm install && pnpm shared:build && pnpm infra:up && pnpm infra:wait && pnpm infra:bootstrap && pnpm db:migrate && pnpm db:seed",
     "dev": "pnpm shared:build && pnpm -r --parallel --filter '!@orbit/shared' run dev",
     "dev:api": "pnpm --filter @orbit/api dev",
+    "dev:matcher": "pnpm --filter @orbit/matcher dev",
+    "dev:realtime": "pnpm --filter @orbit/realtime dev",
     "dev:workers": "pnpm --filter @orbit/workers dev",
     "dev:web": "pnpm --filter @orbit/web dev",
     "build": "pnpm -r run build",

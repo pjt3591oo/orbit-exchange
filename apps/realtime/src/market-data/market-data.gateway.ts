@@ -11,15 +11,23 @@ import {
 import { Server, Socket } from 'socket.io';
 import type Redis from 'ioredis';
 import { REDIS_SUB } from '../redis/redis.module';
-import { MatchingEngineService } from '../matching/matching-engine.service';
+import { SnapshotCacheService } from './snapshot-cache.service';
 
 /**
  * Socket.IO gateway for market-data push.
  *
- * Subscribes to Redis pub/sub channels that the `market-data-fanout` worker
- * publishes into (upstream: Kafka → worker → Redis → all API pods → clients).
- * The API process never publishes onto these channels itself — that path is
- * reserved for workers so matching-engine latency never blocks on fanout.
+ * Upstream pipeline:
+ *   matcher → Kafka (trades, orderbook, etc.)
+ *           → workers/market-data-fanout (Kafka consumer)
+ *           → Redis pub/sub (`md:<symbol>:<kind>`)
+ *           → realtime pods psubscribe → emit to room
+ *
+ * The realtime service is intentionally stateless and matcher-agnostic —
+ * scaling it horizontally just adds more pods on the same Redis fanout.
+ *
+ * For new subscribers, we read the most recent orderbook snapshot from
+ * Redis SET (`ob:snapshot:<symbol>`) which the matcher refreshes on every
+ * match. Pub/sub alone can't help late joiners since it's fire-and-forget.
  */
 @WebSocketGateway({
   cors: { origin: process.env.API_CORS_ORIGIN?.split(',') ?? true, credentials: true },
@@ -33,7 +41,7 @@ export class MarketDataGateway
 
   constructor(
     @Inject(REDIS_SUB) private readonly sub: Redis,
-    private readonly matching: MatchingEngineService,
+    private readonly snapshotCache: SnapshotCacheService,
   ) {}
 
   onModuleInit() {
@@ -47,6 +55,7 @@ export class MarketDataGateway
         this.log.warn(`pubsub decode err: ${(e as Error).message}`);
       }
     });
+    this.log.log('subscribed to Redis pattern md:*');
   }
 
   handleConnection(client: Socket) {
@@ -58,7 +67,7 @@ export class MarketDataGateway
   }
 
   @SubscribeMessage('subscribe')
-  onSubscribe(
+  async onSubscribe(
     @ConnectedSocket() client: Socket,
     @MessageBody() body: { symbol: string },
   ) {
@@ -67,13 +76,14 @@ export class MarketDataGateway
     for (const kind of ['trade', 'orderbook', 'candle']) {
       client.join(`md:${symbol}:${kind}`);
     }
-    // send current orderbook snapshot immediately
-    try {
-      const engine = this.matching.getEngine(symbol);
-      const ob = engine.getOrderbook();
-      client.emit('orderbook', { symbol, ...ob, ts: Date.now() });
-    } catch {
-      /* market may not exist */
+    // Snapshot pull from Redis SET — the matcher keeps this fresh.
+    const snapshot = await this.snapshotCache.getOrderbook(symbol);
+    if (snapshot) {
+      client.emit('orderbook', snapshot);
+    } else {
+      // Empty book — matcher hasn't published yet (cold start). Client UI
+      // will fill in once the first orderbook tick arrives via pub/sub.
+      client.emit('orderbook', { symbol, asks: [], bids: [], ts: Date.now() });
     }
     return { ok: true };
   }

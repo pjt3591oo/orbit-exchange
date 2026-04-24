@@ -60,7 +60,7 @@ rpk_run() {
     return 127
   fi
 }
-for t in orbit.trades.v1 orbit.orders.v1 orbit.orderbook.v1 orbit.user-events.v1 orbit.dlq.v1; do
+for t in orbit.order-commands.v1 orbit.trades.v1 orbit.orders.v1 orbit.orderbook.v1 orbit.user-events.v1 orbit.dlq.v1; do
   rpk_run topic create "$t" -p 3 -r 1 >/dev/null 2>&1 || true
 done
 

@@ -25,9 +25,7 @@
     "@nestjs/jwt": "^10.2.0",
     "@nestjs/passport": "^10.0.3",
     "@nestjs/platform-express": "^10.4.6",
-    "@nestjs/platform-socket.io": "^10.4.6",
     "@nestjs/swagger": "^7.4.2",
-    "@nestjs/websockets": "^10.4.6",
     "@prisma/client": "^5.22.0",
     "@orbit/shared": "workspace:*",
     "argon2": "^0.41.1",
@@ -39,15 +37,12 @@
     "ioredis": "^5.4.1",
     "kafkajs": "^2.2.4",
     "nestjs-pino": "^4.1.0",
-    "orderbook-match-engine": "^2.0.0",
-    "p-queue": "^7.4.1",
     "passport": "^0.7.0",
     "passport-jwt": "^4.0.1",
     "pino-http": "^10.3.0",
     "pino-pretty": "^11.3.0",
     "reflect-metadata": "^0.2.2",
-    "rxjs": "^7.8.1",
-    "socket.io": "^4.8.1"
+    "rxjs": "^7.8.1"
   },
   "devDependencies": {
     "@nestjs/cli": "^10.4.7",

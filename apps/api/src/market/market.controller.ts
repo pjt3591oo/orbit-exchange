@@ -1,8 +1,20 @@
-import { BadRequestException, Controller, Get, Param, Query } from '@nestjs/common';
+import {
+  BadRequestException,
+  Controller,
+  Get,
+  Inject,
+  Param,
+  Query,
+} from '@nestjs/common';
 import Decimal from 'decimal.js';
-import { CANDLE_INTERVAL_SECONDS, type CandleInterval } from '@orbit/shared';
+import type Redis from 'ioredis';
+import {
+  CANDLE_INTERVAL_SECONDS,
+  REDIS_KEYS,
+  type CandleInterval,
+} from '@orbit/shared';
 import { PrismaService } from '../prisma/prisma.service';
-import { MatchingEngineService } from '../matching/matching-engine.service';
+import { REDIS_CLIENT } from '../redis/redis.module';
 
 type CandleRow = {
   market: string;
@@ -19,7 +31,7 @@ type CandleRow = {
 export class MarketController {
   constructor(
     private readonly prisma: PrismaService,
-    private readonly matching: MatchingEngineService,
+    @Inject(REDIS_CLIENT) private readonly redis: Redis,
   ) {}
 
   @Get()
@@ -38,11 +50,23 @@ export class MarketController {
     }));
   }
 
+  /**
+   * Orderbook snapshot. The matcher writes the latest book state to Redis
+   * (`ob:snapshot:<symbol>`) on every match (throttled). API just reads.
+   * Returns an empty book if the cache hasn't been populated yet (matcher
+   * not running / new market with no activity).
+   */
   @Get(':symbol/orderbook')
-  orderbook(@Param('symbol') symbol: string) {
-    const engine = this.matching.getEngine(symbol);
-    const ob = engine.getOrderbook();
-    return { symbol, ...ob, ts: Date.now() };
+  async orderbook(@Param('symbol') symbol: string) {
+    const cached = await this.redis.get(REDIS_KEYS.ORDERBOOK_SNAPSHOT(symbol));
+    if (cached) {
+      try {
+        return JSON.parse(cached);
+      } catch {
+        /* fall through to empty book */
+      }
+    }
+    return { symbol, asks: [], bids: [], ts: Date.now() };
   }
 
   @Get(':symbol/trades')

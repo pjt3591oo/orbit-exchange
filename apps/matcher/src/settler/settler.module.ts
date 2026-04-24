@@ -1,9 +1,10 @@
 import { Module } from '@nestjs/common';
 import { MatchingModule } from '../matching/matching.module';
-import { MarketDataGateway } from './market-data.gateway';
+import { SettlerService } from './settler.service';
 
 @Module({
   imports: [MatchingModule],
-  providers: [MarketDataGateway],
+  providers: [SettlerService],
+  exports: [SettlerService],
 })
-export class MarketDataModule {}
+export class SettlerModule {}

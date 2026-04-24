@@ -6,40 +6,31 @@ import { PrismaService } from '../prisma/prisma.service';
 type MarketSymbol = string;
 
 /**
- * Owns one matching engine instance per market and serializes writes
- * through a per-market p-queue so engine state and DB state stay aligned.
+ * Owns the in-memory Orderbook for every enabled market and serializes
+ * writes through a per-market p-queue (concurrency=1). On boot, replays all
+ * OPEN/PARTIAL limit orders from DB so the in-memory book matches the
+ * persisted truth.
  *
- * We use `Orderbook` directly (not `Engine`) because we persist inside the
- * caller's `prisma.$transaction`; going through `Engine` hooks would require
- * async propagation across the tx boundary.
+ * This service is the single owner of the orderbook in the matcher process —
+ * neither API nor realtime ever instantiate it.
  */
 @Injectable()
 export class MatchingEngineService implements OnModuleInit {
   private readonly log = new Logger(MatchingEngineService.name);
-  private books = new Map<MarketSymbol, Orderbook>();
-  private queues = new Map<MarketSymbol, PQueue>();
+  private readonly books = new Map<MarketSymbol, Orderbook>();
+  private readonly queues = new Map<MarketSymbol, PQueue>();
 
   constructor(private readonly prisma: PrismaService) {}
 
   async onModuleInit() {
     const markets = await this.prisma.market.findMany({ where: { enabled: true } });
     for (const m of markets) this.ensureBook(m.symbol);
-
     await this.replayOpenOrders();
     this.log.log(`matching engines ready: ${[...this.books.keys()].join(', ')}`);
   }
 
   getEngine(symbol: string): Orderbook {
     return this.ensureBook(symbol);
-  }
-
-  getQueue(symbol: string): PQueue {
-    let q = this.queues.get(symbol);
-    if (!q) {
-      q = new PQueue({ concurrency: 1 });
-      this.queues.set(symbol, q);
-    }
-    return q;
   }
 
   /** Serialize a task against this market's write lane. */
@@ -50,6 +41,15 @@ export class MatchingEngineService implements OnModuleInit {
 
   sideToEngine(side: 'BID' | 'ASK'): TRADE_SIDE {
     return side === 'BID' ? TRADE_SIDE.BID : TRADE_SIDE.ASK;
+  }
+
+  private getQueue(symbol: string): PQueue {
+    let q = this.queues.get(symbol);
+    if (!q) {
+      q = new PQueue({ concurrency: 1 });
+      this.queues.set(symbol, q);
+    }
+    return q;
   }
 
   private ensureBook(symbol: string): Orderbook {

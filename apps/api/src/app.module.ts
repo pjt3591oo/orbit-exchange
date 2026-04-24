@@ -9,10 +9,15 @@ import { UserModule } from './user/user.module';
 import { WalletModule } from './wallet/wallet.module';
 import { MarketModule } from './market/market.module';
 import { OrderModule } from './order/order.module';
-import { MatchingModule } from './matching/matching.module';
-import { MarketDataModule } from './market-data/market-data.module';
 import { HealthModule } from './health/health.module';
 
+/**
+ * apps/api is HTTP-only after the matcher/realtime split:
+ *   - controllers (auth, user, wallet, market, order) handle REST
+ *   - OrderModule publishes commands to Kafka (orbit.order-commands.v1)
+ *   - WS gateway lives in apps/realtime
+ *   - matching engine lives in apps/matcher
+ */
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
@@ -32,9 +37,7 @@ import { HealthModule } from './health/health.module';
     UserModule,
     WalletModule,
     MarketModule,
-    MatchingModule,
     OrderModule,
-    MarketDataModule,
     HealthModule,
   ],
 })
