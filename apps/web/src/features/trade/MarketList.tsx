@@ -1,7 +1,8 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../../lib/api';
+import { getMarketSocket } from '../../lib/ws';
 import { T, fmtNum, fmtPct, priceDigits } from '../../design/tokens';
 import { Chip, IconSearch, IconStar } from '../../design/atoms';
 
@@ -12,6 +13,12 @@ interface MarketRow {
   takerFeeBp: number;
 }
 interface TickerRow { market: string; price: number; chg24: number; }
+
+// Live tick state per market — populated by WS trade events. The price here
+// overrides the polled ticker so updates feel instant. `dir` records whether
+// the latest trade ticked up/down/flat vs the previous live price; `ver` is
+// a monotonic counter that lets a CSS animation re-trigger on each tick.
+interface LiveTick { price: number; dir: 'up' | 'down' | 'flat'; ver: number }
 
 // Pull last trade + 24h open from candles for each market to compute chg24.
 // MVP: fetch markets once, then per-market price via /trades?limit=1.
@@ -55,6 +62,44 @@ export function MarketList({ selected }: { selected: string }) {
     (tickers ?? []).forEach((t) => m.set(t.market, t));
     return m;
   }, [tickers]);
+
+  // Live last-trade price per market via WS. We subscribe to every market in
+  // the registry (not just the selected one) so the side panel reflects
+  // matches across the board the moment they happen. The 5s ticker poll is
+  // still the source of truth for chg24.
+  const [liveTicks, setLiveTicks] = useState<Record<string, LiveTick>>({});
+  // Track the previous live price in a ref so back-to-back trades within one
+  // React render still produce a meaningful direction.
+  const lastPriceRef = useRef<Record<string, number>>({});
+
+  useEffect(() => {
+    if (symbols.length === 0) return;
+    const sock = getMarketSocket();
+    // Realtime gateway joins all three rooms (trade/orderbook/candle) on a
+    // single `subscribe` call — `kind` would be ignored.
+    symbols.forEach((sym) => sock.emit('subscribe', { symbol: sym }));
+
+    const handler = (t: { market: string; price: string }) => {
+      const newPrice = Number(t.price);
+      if (!Number.isFinite(newPrice) || newPrice <= 0) return;
+      const prev = lastPriceRef.current[t.market];
+      const dir: 'up' | 'down' | 'flat' =
+        prev === undefined || prev === newPrice
+          ? 'flat'
+          : newPrice > prev
+            ? 'up'
+            : 'down';
+      lastPriceRef.current[t.market] = newPrice;
+      setLiveTicks((cur) => ({
+        ...cur,
+        [t.market]: { price: newPrice, dir, ver: (cur[t.market]?.ver ?? 0) + 1 },
+      }));
+    };
+    sock.on('trade', handler);
+    return () => {
+      sock.off('trade', handler);
+    };
+  }, [symbols.join(',')]);
 
   const rows = useMemo(() => {
     const list = (markets ?? []).filter((m) => {
@@ -132,13 +177,29 @@ export function MarketList({ selected }: { selected: string }) {
       <div style={{ overflow: 'auto', flex: 1 }}>
         {rows.map((m) => {
           const tk = tickerMap.get(m.symbol);
-          const col = (tk?.chg24 ?? 0) >= 0 ? T.up : T.down;
+          const live = liveTicks[m.symbol];
+          // Live trade price overrides the 5s polled price as soon as we
+          // receive any tick.
+          const price = live?.price ?? tk?.price;
+          const chg24 = tk?.chg24 ?? 0;
+          const chgCol = chg24 >= 0 ? T.up : T.down;
+          // Price text colour: most-recent tick direction wins (so the user
+          // sees red/blue the instant a trade lands). When there's been no
+          // tick yet, fall back to the 24h change colour so the column is
+          // never a meaningless black.
+          const priceCol =
+            live?.dir === 'up'
+              ? T.up
+              : live?.dir === 'down'
+                ? T.down
+                : chgCol;
           const active = m.symbol === selected;
           return (
             <div
               key={m.symbol}
               onClick={() => nav(`/trade/${m.symbol}`)}
               style={{
+                position: 'relative',
                 display: 'grid',
                 gridTemplateColumns: '16px 1fr 86px 68px',
                 gap: 8,
@@ -158,8 +219,22 @@ export function MarketList({ selected }: { selected: string }) {
                 if (!active) e.currentTarget.style.background = 'transparent';
               }}
             >
+              {/* Trade-tick flash. `key={ver}` remounts the element on every
+                  trade so the 700ms fade-out animation plays each time. */}
+              {live && live.dir !== 'flat' && (
+                <div
+                  key={live.ver}
+                  style={{
+                    position: 'absolute',
+                    inset: 0,
+                    background: live.dir === 'up' ? T.upBg : T.downBg,
+                    animation: 'orbitTickFlash 700ms ease-out forwards',
+                    pointerEvents: 'none',
+                  }}
+                />
+              )}
               <IconStar color={T.text4} />
-              <div style={{ overflow: 'hidden' }}>
+              <div style={{ overflow: 'hidden', position: 'relative' }}>
                 <div style={{ color: T.text, fontWeight: 600, lineHeight: 1.1 }}>{m.baseAsset}</div>
                 <div
                   style={{
@@ -176,15 +251,15 @@ export function MarketList({ selected }: { selected: string }) {
               </div>
               <div
                 className="mono"
-                style={{ textAlign: 'right', color: T.text, fontWeight: 500 }}
+                style={{ textAlign: 'right', color: priceCol, fontWeight: 600, position: 'relative' }}
               >
-                {tk ? fmtNum(tk.price, priceDigits(tk.price)) : '—'}
+                {price != null ? fmtNum(price, priceDigits(price)) : '—'}
               </div>
               <div
                 className="mono"
-                style={{ textAlign: 'right', color: col, fontWeight: 600, fontSize: 11.5 }}
+                style={{ textAlign: 'right', color: chgCol, fontWeight: 600, fontSize: 11.5, position: 'relative' }}
               >
-                {tk ? fmtPct(tk.chg24) : '—'}
+                {tk ? fmtPct(chg24) : '—'}
               </div>
             </div>
           );

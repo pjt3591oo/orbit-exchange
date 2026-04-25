@@ -26,6 +26,7 @@
     "infra:bootstrap": "bash infra/localstack/bootstrap.sh",
     "db:migrate": "pnpm --filter @orbit/api run db:migrate",
     "db:seed": "pnpm --filter @orbit/api run db:seed",
-    "db:reset": "pnpm --filter @orbit/api exec prisma migrate reset --force"
+    "db:reset": "pnpm --filter @orbit/api exec prisma migrate reset --force",
+    "orders:gen": "pnpm --filter @orbit/api exec tsx ../../scripts/order-gen.ts"
   }
 }

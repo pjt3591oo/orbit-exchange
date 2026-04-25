@@ -59,18 +59,25 @@ export function OrderbookPanel({
           ? Number(bids[0].price)
           : null;
 
-  const maxQty = useMemo(() => {
-    const all = [...snap.asks, ...snap.bids].map((l) => Number(l.quantity));
-    return Math.max(0.0001, ...all);
-  }, [snap]);
+  // Bar width = (this level's qty) / (sum of all qty on this side) * 100%.
+  // So each side's bars together add up to 100% — the bar literally shows
+  // "what share of the side this single level represents". Levels stay in
+  // their natural price order; no cumulative effect.
+  const totalAskQty = useMemo(
+    () => snap.asks.reduce((s, l) => s + Number(l.quantity), 0),
+    [snap.asks],
+  );
+  const totalBidQty = useMemo(
+    () => snap.bids.reduce((s, l) => s + Number(l.quantity), 0),
+    [snap.bids],
+  );
 
   const dig = mid ? priceDigits(mid) : 0;
 
-  const Row = ({ side, r }: { side: 'ask' | 'bid'; r: Level }) => {
+  const Row = ({ side, r, pct }: { side: 'ask' | 'bid'; r: Level; pct: number }) => {
     const isAsk = side === 'ask';
     const col = isAsk ? T.down : T.up; // Korean orderbook: ask=blue, bid=red
     const bg = isAsk ? T.downBg : T.upBg;
-    const pct = (Number(r.quantity) / maxQty) * 100;
     const sum = Number(r.price) * Number(r.quantity);
     return (
       <div
@@ -149,7 +156,12 @@ export function OrderbookPanel({
       </div>
 
       <div style={{ flex: 1, overflow: 'auto', display: 'flex', flexDirection: 'column' }}>
-        <div>{asks.map((r, i) => <Row key={'a' + i} side="ask" r={r} />)}</div>
+        <div>
+          {asks.map((r, i) => {
+            const pct = totalAskQty > 0 ? (Number(r.quantity) / totalAskQty) * 100 : 0;
+            return <Row key={'a' + i} side="ask" r={r} pct={pct} />;
+          })}
+        </div>
         <div
           style={{
             display: 'flex',
@@ -176,7 +188,12 @@ export function OrderbookPanel({
             {mid != null ? `≈ ${quoteAsset === 'KRW' ? '₩' : ''}${fmtNum(mid, 0)}` : ''}
           </span>
         </div>
-        <div>{bids.map((r, i) => <Row key={'b' + i} side="bid" r={r} />)}</div>
+        <div>
+          {bids.map((r, i) => {
+            const pct = totalBidQty > 0 ? (Number(r.quantity) / totalBidQty) * 100 : 0;
+            return <Row key={'b' + i} side="bid" r={r} pct={pct} />;
+          })}
+        </div>
       </div>
     </div>
   );
