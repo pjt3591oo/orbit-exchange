@@ -84,6 +84,7 @@ export class OrderService {
     // After-commit publish. Best-effort: matcher will redeliver state via WS
     // once it processes the command. If kafka is down, the order sits in OPEN
     // until kafka recovers (matcher re-consumes from offset).
+    // TODO:: kafka 장애 - outbox 패턴으로 전환 고려.
     const cmd: OrderSubmitCommand = {
       v: 1,
       type: 'SUBMIT',
