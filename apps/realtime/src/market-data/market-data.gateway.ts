@@ -66,24 +66,39 @@ export class MarketDataGateway
     this.log.debug(`ws disconnect ${client.id}`);
   }
 
+  /**
+   * Subscribe a client to a market's data rooms. `kind` lets callers pick
+   * which streams they actually want — important because:
+   *
+   *   - The market-list side panel only needs trade ticks, but if it joined
+   *     the orderbook room too the gateway would `emit('orderbook', ...)`
+   *     back on every subscribe call, **clobbering** the trade page's
+   *     populated orderbook with an empty one whenever the snapshot SET
+   *     happens to be missing (e.g. matcher idle longer than the TTL).
+   *   - The orderbook panel wants the snapshot push on subscribe; the
+   *     trades tape doesn't.
+   *
+   * `kind: 'all'` (default) preserves prior behaviour for clients that
+   * still send the old `{symbol}` payload.
+   */
   @SubscribeMessage('subscribe')
   async onSubscribe(
     @ConnectedSocket() client: Socket,
-    @MessageBody() body: { symbol: string },
+    @MessageBody() body: { symbol: string; kind?: 'trade' | 'orderbook' | 'candle' | 'all' },
   ) {
-    const { symbol } = body ?? {};
+    const { symbol, kind = 'all' } = body ?? {};
     if (!symbol) return { ok: false };
-    for (const kind of ['trade', 'orderbook', 'candle']) {
-      client.join(`md:${symbol}:${kind}`);
-    }
-    // Snapshot pull from Redis SET — the matcher keeps this fresh.
-    const snapshot = await this.snapshotCache.getOrderbook(symbol);
-    if (snapshot) {
-      client.emit('orderbook', snapshot);
-    } else {
-      // Empty book — matcher hasn't published yet (cold start). Client UI
-      // will fill in once the first orderbook tick arrives via pub/sub.
-      client.emit('orderbook', { symbol, asks: [], bids: [], ts: Date.now() });
+    const kinds =
+      kind === 'all' ? (['trade', 'orderbook', 'candle'] as const) : ([kind] as const);
+    for (const k of kinds) client.join(`md:${symbol}:${k}`);
+
+    // Only push a snapshot if the caller asked for orderbook updates AND we
+    // actually have one. Emitting an empty payload here is what was nuking
+    // the panel — the client already starts with an empty book by default,
+    // and the next pub/sub tick will fill it.
+    if ((kind === 'all' || kind === 'orderbook')) {
+      const snapshot = await this.snapshotCache.getOrderbook(symbol);
+      if (snapshot) client.emit('orderbook', snapshot);
     }
     return { ok: true };
   }
@@ -91,12 +106,13 @@ export class MarketDataGateway
   @SubscribeMessage('unsubscribe')
   onUnsubscribe(
     @ConnectedSocket() client: Socket,
-    @MessageBody() body: { symbol: string },
+    @MessageBody() body: { symbol: string; kind?: 'trade' | 'orderbook' | 'candle' | 'all' },
   ) {
-    const { symbol } = body ?? {};
-    for (const kind of ['trade', 'orderbook', 'candle']) {
-      client.leave(`md:${symbol}:${kind}`);
-    }
+    const { symbol, kind = 'all' } = body ?? {};
+    if (!symbol) return { ok: false };
+    const kinds =
+      kind === 'all' ? (['trade', 'orderbook', 'candle'] as const) : ([kind] as const);
+    for (const k of kinds) client.leave(`md:${symbol}:${k}`);
     return { ok: true };
   }
 }

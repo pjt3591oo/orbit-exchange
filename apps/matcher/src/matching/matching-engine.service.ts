@@ -33,6 +33,11 @@ export class MatchingEngineService implements OnModuleInit {
     return this.ensureBook(symbol);
   }
 
+  /** All symbols this matcher owns an in-memory book for. */
+  getAllSymbols(): string[] {
+    return [...this.books.keys()];
+  }
+
   /** Serialize a task against this market's write lane. */
   async run<T>(symbol: string, task: () => Promise<T>): Promise<T> {
     const result = await this.getQueue(symbol).add(task);

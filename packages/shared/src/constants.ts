@@ -35,8 +35,18 @@ export const REDIS_KEYS = {
   ORDERBOOK_SNAPSHOT: (symbol: string) => `ob:snapshot:${symbol}`,
 } as const;
 
-/** TTL for orderbook snapshot cache (seconds). */
-export const ORDERBOOK_SNAPSHOT_TTL_SEC = 60;
+/**
+ * TTL for orderbook snapshot cache (seconds). The matcher refreshes the SET
+ * on every order/cancel/match, so during active trading the TTL never matters.
+ * It only kicks in when a market is quiet for an extended period — at which
+ * point the key disappears and any new subscriber sees an empty book until
+ * the next event.
+ *
+ * Set to 24h so quiet markets stay populated; if the matcher dies the next
+ * boot replays from DB and rewrites this key, so stale data is bounded by
+ * matcher downtime.
+ */
+export const ORDERBOOK_SNAPSHOT_TTL_SEC = 86400;
 
 export type CandleInterval = 'M1' | 'M5' | 'M15' | 'H1' | 'H4' | 'D1' | 'W1';
 export const CANDLE_INTERVAL_SECONDS: Record<CandleInterval, number> = {

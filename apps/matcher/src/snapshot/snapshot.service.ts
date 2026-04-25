@@ -1,4 +1,4 @@
-import { Inject, Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import type Redis from 'ioredis';
 import {
   ORDERBOOK_SNAPSHOT_TTL_SEC,
@@ -19,7 +19,7 @@ const THROTTLE_MS = 100;
  * still flow via Kafka → fanout → Redis pub/sub at full rate.
  */
 @Injectable()
-export class SnapshotService {
+export class SnapshotService implements OnModuleInit {
   private readonly log = new Logger(SnapshotService.name);
   private readonly pending = new Map<string, NodeJS.Timeout>();
   private readonly lastWrite = new Map<string, number>();
@@ -28,6 +28,21 @@ export class SnapshotService {
     @Inject(REDIS_CLIENT) private readonly redis: Redis,
     private readonly matching: MatchingEngineService,
   ) {}
+
+  /**
+   * After replay, push a snapshot for every market we own. Without this, a
+   * freshly booted matcher leaves Redis empty until the first new event,
+   * which means every WS subscriber that connects in the meantime gets a
+   * blank book. Nest guarantees this runs after MatchingEngineService's own
+   * onModuleInit (we depend on it via DI), so the books are populated.
+   */
+  async onModuleInit() {
+    const symbols = this.matching.getAllSymbols();
+    await Promise.all(symbols.map((s) => this.write(s)));
+    if (symbols.length) {
+      this.log.log(`bootstrapped snapshots for ${symbols.length} market(s)`);
+    }
+  }
 
   /** Schedule a snapshot write. Coalesces bursts into one write per ~100ms. */
   schedule(symbol: string) {

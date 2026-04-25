@@ -75,9 +75,11 @@ export function MarketList({ selected }: { selected: string }) {
   useEffect(() => {
     if (symbols.length === 0) return;
     const sock = getMarketSocket();
-    // Realtime gateway joins all three rooms (trade/orderbook/candle) on a
-    // single `subscribe` call — `kind` would be ignored.
-    symbols.forEach((sym) => sock.emit('subscribe', { symbol: sym }));
+    // Trade-only subscription. We don't want this side panel to also pull
+    // an orderbook snapshot back per symbol — that would clobber the trade
+    // page's populated orderbook with an empty payload whenever the Redis
+    // snapshot key happens to be missing.
+    symbols.forEach((sym) => sock.emit('subscribe', { symbol: sym, kind: 'trade' }));
 
     const handler = (t: { market: string; price: string }) => {
       const newPrice = Number(t.price);
