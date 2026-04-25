@@ -20,7 +20,7 @@
     "kafkajs": "^2.2.4",
     "nestjs-pino": "^4.1.0",
     "orderbook-match-engine": "^2.0.0",
-    "p-queue": "^7.4.1",
+    "p-queue": "^6.6.2",
     "pino-http": "^10.3.0",
     "pino-pretty": "^11.3.0",
     "reflect-metadata": "^0.2.2",
