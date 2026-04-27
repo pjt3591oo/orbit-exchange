@@ -17,6 +17,11 @@ interface DlqRow {
   resolvedAt: string | null;
   resolution: string | null;
   resolvedBy: string | null;
+  /** id of the DlqEvent this row was created from (replay lineage parent). */
+  replayedFromId: string | null;
+  /** id of a DlqEvent that lists this row as replayedFromId — meaning
+   *  a replay of THIS row failed and produced that new row. */
+  replayChainNextId: string | null;
 }
 
 interface DlqDetail extends DlqRow {
@@ -33,9 +38,16 @@ interface DlqDetail extends DlqRow {
  * Both mutations require a reason and prompt a confirmation dialog —
  * AdminAuditLog records who, what, why.
  */
+type StatusFilter =
+  | 'pending'
+  | 'replayed-success'
+  | 'replayed-failed'
+  | 'dismissed'
+  | 'all';
+
 export function DlqPage() {
   const canMutate = hasAnyRole(['MARKET_OPS']);
-  const [resolved, setResolved] = useState<'false' | 'true' | 'all'>('false');
+  const [status, setStatus] = useState<StatusFilter>('pending');
   const [worker, setWorker] = useState('');
   const [originalTopic, setOriginalTopic] = useState('');
   const [expanded, setExpanded] = useState<string | null>(null);
@@ -47,11 +59,11 @@ export function DlqPage() {
 
   const qc = useQueryClient();
   const list = useQuery({
-    queryKey: ['admin-dlq', resolved, worker, originalTopic],
+    queryKey: ['admin-dlq', status, worker, originalTopic],
     queryFn: async () =>
       (await api.get<{ items: DlqRow[]; nextCursor: string | null }>('/dlq', {
         params: {
-          resolved,
+          status,
           ...(worker && { worker }),
           ...(originalTopic && { originalTopic }),
         },
@@ -89,19 +101,21 @@ export function DlqPage() {
     <>
       <PageHeader
         title="DLQ"
-        subtitle="처리 실패 메시지 — 원본 토픽으로 replay 또는 dismiss"
+        subtitle="컨슈머가 영구히 처리 못 한 메시지 — 원본 토픽으로 replay 또는 dismiss"
       />
       <Card>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr) auto', gap: 12, alignItems: 'end' }}>
           <div>
             <div style={labelStyle}>상태</div>
             <select
-              value={resolved}
-              onChange={(e) => setResolved(e.target.value as typeof resolved)}
+              value={status}
+              onChange={(e) => setStatus(e.target.value as StatusFilter)}
               style={inputStyle}
             >
-              <option value="false">미해결</option>
-              <option value="true">해결됨</option>
+              <option value="pending">조치 대기</option>
+              <option value="replayed-failed">replay 재실패</option>
+              <option value="replayed-success">replay 성공</option>
+              <option value="dismissed">dismiss</option>
               <option value="all">전체</option>
             </select>
           </div>
@@ -140,7 +154,19 @@ export function DlqPage() {
               <tr><td colSpan={8} style={{ padding: 12, color: 'var(--text-3)' }}>로딩…</td></tr>
             )}
             {list.data?.items.length === 0 && (
-              <tr><td colSpan={8} style={{ padding: 12, color: 'var(--text-3)' }}>비어있음 ✓</td></tr>
+              <tr>
+                <td colSpan={8} style={{ padding: 16, color: 'var(--text-3)' }}>
+                  <div style={{ fontWeight: 600, marginBottom: 4 }}>비어있음 ✓</div>
+                  <div style={{ fontSize: 11, lineHeight: 1.6 }}>
+                    {status === 'pending' && '운영자 조치를 기다리는 메시지가 없습니다.'}
+                    {status === 'replayed-failed' &&
+                      'replay 후 다시 실패한 메시지가 없음 — 처리한 replay 가 모두 정상 종료됐다는 뜻.'}
+                    {status === 'replayed-success' && '아직 성공적으로 replay 된 메시지가 없습니다.'}
+                    {status === 'dismissed' && 'dismiss 처리된 메시지가 없습니다.'}
+                    {status === 'all' && 'DLQ 에 행이 전혀 없습니다.'}
+                  </div>
+                </td>
+              </tr>
             )}
             {list.data?.items.map((r) => (
               <>
@@ -158,15 +184,7 @@ export function DlqPage() {
                     title={r.lastError}>
                     {r.lastError.length > 60 ? r.lastError.slice(0, 60) + '…' : r.lastError}
                   </td>
-                  <td style={{ fontSize: 11 }}>
-                    {r.resolvedAt ? (
-                      <span style={{ color: 'var(--text-3)' }}>
-                        {r.resolution} <small>({new Date(r.resolvedAt).toLocaleString()})</small>
-                      </span>
-                    ) : (
-                      <span style={{ color: 'var(--danger)' }}>● 미해결</span>
-                    )}
-                  </td>
+                  <td style={{ fontSize: 11 }}>{renderStatus(r)}</td>
                   <td>
                     <div style={{ display: 'flex', gap: 4 }}>
                       <button
@@ -270,6 +288,55 @@ export function DlqPage() {
         />
       )}
     </>
+  );
+}
+
+/**
+ * 4 distinct states the operator cares about:
+ *   ① 조치 대기  — resolvedAt = null
+ *   ② dismiss    — resolvedAt + resolution='dismissed'
+ *   ③ replay 성공 — resolvedAt + resolution='replayed' AND no descendant
+ *                  (no other DlqEvent points at this row's id)
+ *   ④ replay → 재실패 — resolvedAt + resolution='replayed' BUT a
+ *                       descendant exists (`replayChainNextId`)
+ *
+ * `replayChainNextId` is resolved server-side: it's the id of the
+ * first DlqEvent that lists this row as `replayedFromId`. The presence
+ * of that link is what distinguishes ③ from ④.
+ */
+function renderStatus(r: DlqRow) {
+  if (!r.resolvedAt) {
+    return <span style={{ color: 'var(--danger)' }}>● 조치 대기</span>;
+  }
+  const when = (
+    <small style={{ color: 'var(--text-3)' }}>
+      {' '}
+      ({new Date(r.resolvedAt).toLocaleTimeString()})
+    </small>
+  );
+  if (r.resolution === 'dismissed') {
+    return <span style={{ color: 'var(--text-3)' }}>✗ dismiss{when}</span>;
+  }
+  if (r.resolution === 'replayed') {
+    if (r.replayChainNextId) {
+      return (
+        <span style={{ color: 'var(--warn, #d97706)' }}>
+          ⚠ replay → 재실패 <small>(DLQ #{r.replayChainNextId})</small>
+          {when}
+        </span>
+      );
+    }
+    return (
+      <span style={{ color: 'var(--ok)' }}>
+        ✓ replay 성공{when}
+      </span>
+    );
+  }
+  return (
+    <span style={{ color: 'var(--text-3)' }}>
+      {r.resolution}
+      {when}
+    </span>
   );
 }
 

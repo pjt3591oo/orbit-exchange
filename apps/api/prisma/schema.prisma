@@ -248,9 +248,24 @@ model DlqEvent {
   /// Keycloak `sub` of the admin who acted, mirroring AdminAuditLog.
   resolvedBy        String?
 
+  /// Lineage — if THIS row was created because a previous DlqEvent was
+  /// replayed by an admin and the replayed message ended up failing again,
+  /// `replayedFromId` points at that previous row's id. NULL for the
+  /// first DLQ row of a freshly failed message.
+  ///
+  /// Used to distinguish "replay 성공" (no descendant) from "replay 후
+  /// 재실패" (descendant exists) in the admin UI without needing a
+  /// separate resolution status. The admin-dlq replay() handler adds
+  /// `x-orbit-replay-of: <id>` to the republished message; dlq-monitor
+  /// reads that header on insert.
+  replayedFromId    BigInt?
+
   @@index([resolvedAt, enqueuedAt])
   @@index([originalTopic, enqueuedAt])
   @@index([worker, enqueuedAt])
+  /// Cheap lookup "does any DlqEvent point at me?" used by the admin
+  /// list query to compute the replay-chain status badge.
+  @@index([replayedFromId])
 }
 
 model Candle {

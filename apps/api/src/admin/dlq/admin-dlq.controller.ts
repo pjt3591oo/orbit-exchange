@@ -34,12 +34,13 @@ export class AdminDlqController {
   @Get()
   @Roles('SUPPORT_READ', 'MARKET_OPS', 'WALLET_ADJUST')
   list(
-    @Query('resolved') resolved?: 'true' | 'false' | 'all',
+    @Query('status')
+    status?: 'pending' | 'replayed-success' | 'replayed-failed' | 'dismissed' | 'all',
     @Query('worker') worker?: string,
     @Query('originalTopic') originalTopic?: string,
     @Query('cursor') cursor?: string,
   ) {
-    return this.dlq.list({ resolved, worker, originalTopic, cursor });
+    return this.dlq.list({ status, worker, originalTopic, cursor });
   }
 
   @Get(':id')

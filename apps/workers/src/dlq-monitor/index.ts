@@ -43,6 +43,15 @@ export async function runDlqMonitor() {
         if (!message.value) return;
 
         const headers = readAllHeaders(message.headers);
+        // If this message is the result of an admin clicking [replay] on
+        // a previous DlqEvent, the api side put the source DlqEvent id
+        // into `x-orbit-replay-of`. Persist as a FK-shaped column so the
+        // admin list query can show the chain.
+        const replayedFromRaw = headers['x-orbit-replay-of'];
+        const replayedFromId =
+          replayedFromRaw && /^\d+$/.test(replayedFromRaw)
+            ? BigInt(replayedFromRaw)
+            : null;
         try {
           await prisma.dlqEvent.create({
             data: {
@@ -57,6 +66,7 @@ export async function runDlqMonitor() {
               worker: headers['x-orbit-worker'] ?? 'unknown',
               lastError: headers['x-orbit-last-error'] ?? '(no error header)',
               attempt: parseInt(headers['x-orbit-attempt'] ?? '0', 10),
+              replayedFromId,
             },
           });
           M.dlqMonitored.inc({
