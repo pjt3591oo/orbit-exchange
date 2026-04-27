@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "pnpm db:generate && tsx watch src/main.ts",
+    "dev": "pnpm db:generate && tsx watch --env-file=.env src/main.ts",
     "build": "pnpm db:generate && tsc -p tsconfig.json",
     "start": "node dist/main.js",
     "db:generate": "prisma generate --schema ../api/prisma/schema.prisma",
