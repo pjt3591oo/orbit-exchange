@@ -10,6 +10,7 @@ import { WalletModule } from './wallet/wallet.module';
 import { MarketModule } from './market/market.module';
 import { OrderModule } from './order/order.module';
 import { HealthModule } from './health/health.module';
+import { AdminModule } from './admin/admin.module';
 
 /**
  * apps/api is HTTP-only after the matcher/realtime split:
@@ -39,6 +40,7 @@ import { HealthModule } from './health/health.module';
     MarketModule,
     OrderModule,
     HealthModule,
+    AdminModule,
   ],
 })
 export class AppModule {}

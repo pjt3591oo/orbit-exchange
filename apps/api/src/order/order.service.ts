@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ForbiddenException,
   Injectable,
   Logger,
   NotFoundException,
@@ -51,6 +52,15 @@ export class OrderService {
   ) {}
 
   async submit(userId: string, dto: CreateOrderDto) {
+    // Block submissions from frozen users (set by an admin via WALLET_ADJUST).
+    // We only check status here, not balance — that comes in lockReservation.
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { frozen: true },
+    });
+    if (!user) throw new NotFoundException('user not found');
+    if (user.frozen) throw new ForbiddenException('account is frozen — contact support');
+
     const market = await this.prisma.market.findUnique({ where: { symbol: dto.market } });
     if (!market || !market.enabled) throw new NotFoundException('market not found');
     this.validateTickStep(dto, market);

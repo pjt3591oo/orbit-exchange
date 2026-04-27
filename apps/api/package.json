@@ -35,6 +35,7 @@
     "decimal.js": "^10.4.3",
     "helmet": "^8.0.0",
     "ioredis": "^5.4.1",
+    "jose": "^5.9.6",
     "kafkajs": "^2.2.4",
     "nestjs-pino": "^4.1.0",
     "passport": "^0.7.0",

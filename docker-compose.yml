@@ -10,6 +10,10 @@ services:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      # On first boot, create the `keycloak` database so the Keycloak service
+      # has somewhere to land. Idempotent — scripts in /docker-entrypoint-initdb.d
+      # only run when the data volume is empty.
+      - ./infra/postgres/init.sh:/docker-entrypoint-initdb.d/init.sh:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U orbit -d orbit"]
       interval: 5s
@@ -85,6 +89,48 @@ services:
       interval: 10s
       timeout: 5s
       retries: 10
+
+  # Keycloak — IdP for the admin console only. Customer auth still uses our
+  # own JWT in apps/api. Bundled with realm-export.json so a fresh `pnpm setup`
+  # produces a logged-in-able admin user without manual configuration.
+  keycloak:
+    image: quay.io/keycloak/keycloak:25.0
+    container_name: orbit-keycloak
+    command:
+      - start-dev
+      - --import-realm
+      - --health-enabled=true
+    environment:
+      # Keycloak 25 uses KEYCLOAK_ADMIN / KEYCLOAK_ADMIN_PASSWORD for the
+      # initial master-realm admin (only consumed on first boot).
+      # KC_BOOTSTRAP_ADMIN_USERNAME / _PASSWORD is the Keycloak 26+ variant —
+      # if you upgrade the image, swap to those names.
+      KEYCLOAK_ADMIN: admin
+      KEYCLOAK_ADMIN_PASSWORD: admin
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://postgres:5432/keycloak
+      KC_DB_USERNAME: orbit
+      KC_DB_PASSWORD: orbit
+      KC_HOSTNAME_STRICT: "false"
+      KC_HTTP_ENABLED: "true"
+    volumes:
+      - ./infra/keycloak:/opt/keycloak/data/import:ro
+    ports:
+      - "8081:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      # Keycloak 25 exposes /health/ready on the management interface (9000)
+      # but for simplicity we hit the OIDC discovery endpoint which proves
+      # the realm is loaded.
+      test:
+        - CMD-SHELL
+        - "curl -fsS http://localhost:8080/realms/orbit/.well-known/openid-configuration > /dev/null"
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
 
 volumes:
   postgres_data:

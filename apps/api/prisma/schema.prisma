@@ -38,9 +38,37 @@ model User {
   id           String   @id @default(cuid())
   email        String   @unique
   passwordHash String
+  // Set true by an admin (WALLET_ADJUST role) to block this user from
+  // submitting new orders. Existing OPEN/PARTIAL orders are NOT auto-cancelled
+  // — admin must force-cancel them separately if desired. Checked at the top
+  // of OrderService.submit.
+  frozen       Boolean  @default(false)
   createdAt    DateTime @default(now())
   wallets      Wallet[]
   orders       Order[]
+}
+
+/// Append-only audit trail for every admin mutation. Written by
+/// AdminAuditInterceptor (via the @AdminAction decorator) so the controller
+/// body stays clean. The `before`/`after` columns capture the row state
+/// for diffability.
+model AdminAuditLog {
+  id         BigInt   @id @default(autoincrement())
+  adminId    String   // Keycloak `sub` (UUID)
+  adminEmail String   // For human-readable searches
+  action     String   // e.g. "user.freeze" / "wallet.adjust" / "market.update"
+  targetType String   // e.g. "User" / "Wallet" / "Order" / "Market" / "Asset"
+  targetId   String
+  before     Json?
+  after      Json?
+  reason     String?  // Required by reasonRequired:true actions
+  ip         String?
+  ua         String?
+  createdAt  DateTime @default(now())
+
+  @@index([adminId, createdAt])
+  @@index([targetType, targetId])
+  @@index([action, createdAt])
 }
 
 model Asset {

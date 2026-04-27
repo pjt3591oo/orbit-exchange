@@ -1,0 +1,184 @@
+{
+  "realm": "orbit",
+  "enabled": true,
+  "displayName": "ORBIT Exchange",
+  "displayNameHtml": "<strong>ORBIT</strong> Exchange",
+  "registrationAllowed": false,
+  "loginWithEmailAllowed": true,
+  "duplicateEmailsAllowed": false,
+  "resetPasswordAllowed": true,
+  "rememberMe": false,
+  "verifyEmail": false,
+  "loginTheme": "keycloak",
+  "accessTokenLifespan": 300,
+  "ssoSessionIdleTimeout": 1800,
+  "ssoSessionMaxLifespan": 3600,
+  "offlineSessionIdleTimeout": 2592000,
+  "accessCodeLifespan": 60,
+  "accessCodeLifespanUserAction": 300,
+  "accessCodeLifespanLogin": 1800,
+
+  "roles": {
+    "realm": [
+      {
+        "name": "SUPPORT_READ",
+        "description": "Read-only access to users / wallets / orders / trades / markets"
+      },
+      {
+        "name": "MARKET_OPS",
+        "description": "Market enable/disable, fee/tick/step changes, asset CRUD, force-cancel orders"
+      },
+      {
+        "name": "WALLET_ADJUST",
+        "description": "Manual user balance adjustment + user freeze toggle"
+      },
+      {
+        "name": "AUDITOR",
+        "description": "Read AdminAuditLog only"
+      }
+    ]
+  },
+
+  "groups": [
+    {
+      "name": "CustomerSupport",
+      "path": "/CustomerSupport",
+      "realmRoles": ["SUPPORT_READ"]
+    },
+    {
+      "name": "Operations",
+      "path": "/Operations",
+      "realmRoles": ["SUPPORT_READ", "MARKET_OPS"]
+    },
+    {
+      "name": "Finance",
+      "path": "/Finance",
+      "realmRoles": ["SUPPORT_READ", "WALLET_ADJUST"]
+    },
+    {
+      "name": "Audit",
+      "path": "/Audit",
+      "realmRoles": ["AUDITOR"]
+    },
+    {
+      "name": "SuperAdmin",
+      "path": "/SuperAdmin",
+      "realmRoles": ["SUPPORT_READ", "MARKET_OPS", "WALLET_ADJUST", "AUDITOR"]
+    }
+  ],
+
+  "clients": [
+    {
+      "clientId": "orbit-admin-web",
+      "name": "ORBIT Admin Web (SPA)",
+      "enabled": true,
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "redirectUris": [
+        "http://localhost:5174/*",
+        "http://localhost:5174"
+      ],
+      "webOrigins": [
+        "http://localhost:5174",
+        "+"
+      ],
+      "attributes": {
+        "pkce.code.challenge.method": "S256",
+        "post.logout.redirect.uris": "http://localhost:5174/*"
+      },
+      "protocolMappers": [
+        {
+          "name": "audience-orbit-admin-api",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.client.audience": "orbit-admin-api",
+            "id.token.claim": "false",
+            "access.token.claim": "true"
+          }
+        }
+      ]
+    },
+    {
+      "clientId": "orbit-admin-api",
+      "name": "ORBIT Admin API (bearer-only)",
+      "enabled": true,
+      "bearerOnly": true,
+      "standardFlowEnabled": false,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false
+    }
+  ],
+
+  "users": [
+    {
+      "username": "admin@orbit.dev",
+      "email": "admin@orbit.dev",
+      "firstName": "Super",
+      "lastName": "Admin",
+      "enabled": true,
+      "emailVerified": true,
+      "credentials": [
+        {
+          "type": "password",
+          "value": "orbit-admin-pw",
+          "temporary": false
+        }
+      ],
+      "groups": ["/SuperAdmin"]
+    },
+    {
+      "username": "support@orbit.dev",
+      "email": "support@orbit.dev",
+      "firstName": "Customer",
+      "lastName": "Support",
+      "enabled": true,
+      "emailVerified": true,
+      "credentials": [
+        { "type": "password", "value": "orbit-admin-pw", "temporary": false }
+      ],
+      "groups": ["/CustomerSupport"]
+    },
+    {
+      "username": "ops@orbit.dev",
+      "email": "ops@orbit.dev",
+      "firstName": "Market",
+      "lastName": "Ops",
+      "enabled": true,
+      "emailVerified": true,
+      "credentials": [
+        { "type": "password", "value": "orbit-admin-pw", "temporary": false }
+      ],
+      "groups": ["/Operations"]
+    },
+    {
+      "username": "finance@orbit.dev",
+      "email": "finance@orbit.dev",
+      "firstName": "Finance",
+      "lastName": "Ops",
+      "enabled": true,
+      "emailVerified": true,
+      "credentials": [
+        { "type": "password", "value": "orbit-admin-pw", "temporary": false }
+      ],
+      "groups": ["/Finance"]
+    },
+    {
+      "username": "audit@orbit.dev",
+      "email": "audit@orbit.dev",
+      "firstName": "Audit",
+      "lastName": "Reader",
+      "enabled": true,
+      "emailVerified": true,
+      "credentials": [
+        { "type": "password", "value": "orbit-admin-pw", "temporary": false }
+      ],
+      "groups": ["/Audit"]
+    }
+  ]
+}

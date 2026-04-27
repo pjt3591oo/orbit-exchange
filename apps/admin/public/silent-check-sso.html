@@ -1,0 +1,11 @@
+<!doctype html>
+<html>
+  <body>
+    <script>
+      // keycloak-js silent SSO probe page.
+      // The library opens this URL in a hidden iframe to detect existing SSO
+      // sessions; we just bounce the message back to the parent window.
+      parent.postMessage(location.href, location.origin);
+    </script>
+  </body>
+</html>
