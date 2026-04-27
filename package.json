@@ -30,7 +30,9 @@
     "db:reset": "pnpm --filter @orbit/api exec prisma migrate reset --force",
     "orders:gen": "pnpm --filter @orbit/api exec tsx ../../scripts/order-gen.ts",
     "grafana:export": "pnpm --filter @orbit/api exec tsx ../../scripts/grafana-export.ts",
-    "grafana:reload": "pnpm --filter @orbit/api exec tsx ../../scripts/grafana-reload.ts"
+    "grafana:reload": "pnpm --filter @orbit/api exec tsx ../../scripts/grafana-reload.ts",
+    "reliability:smoke": "pnpm --filter @orbit/api exec tsx ../../scripts/smoke-reliability.ts",
+    "reliability:chaos": "pnpm --filter @orbit/api exec tsx ../../scripts/chaos-reliability.ts"
   },
   "devDependencies": {
     "@types/node": "^25.6.0"

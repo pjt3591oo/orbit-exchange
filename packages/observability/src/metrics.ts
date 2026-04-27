@@ -203,4 +203,28 @@ export const Metrics = {
     labelNames: ['worker'] as const,
     registers: [registry],
   }),
+
+  /* DLQ / retry tiers (ADR-0004) -------------------------------- */
+  workerRetryEnqueued: new Counter({
+    name: 'orbit_worker_retry_enqueued_total',
+    help: 'Messages escalated by withRetryPolicy. target labels: inflight | orbit.retry.30s.v1 | orbit.dlq.v1 | failed-to-enqueue.',
+    labelNames: ['worker', 'target'] as const,
+    registers: [registry],
+  }),
+  dlqMonitored: new Counter({
+    name: 'orbit_dlq_monitored_total',
+    help: 'DLQ messages mirrored into the DlqEvent table by dlq-monitor.',
+    labelNames: ['original_topic', 'worker'] as const,
+    registers: [registry],
+  }),
+  dlqPending: new Gauge({
+    name: 'orbit_dlq_pending_count',
+    help: 'Unresolved DlqEvent rows (resolvedAt IS NULL).',
+    registers: [registry],
+  }),
+  dlqOldestAge: new Gauge({
+    name: 'orbit_dlq_oldest_age_seconds',
+    help: 'Age of the oldest unresolved DlqEvent row in seconds.',
+    registers: [registry],
+  }),
 };

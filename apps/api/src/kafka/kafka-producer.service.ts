@@ -55,4 +55,13 @@ export class KafkaProducerService implements OnModuleInit, OnModuleDestroy {
       this.log.error(`Kafka send failed topic=${topic}: ${(err as Error).message}`);
     }
   }
+
+  /**
+   * Escape hatch for callers that need to publish raw bytes (e.g. DLQ
+   * replay — the payload is already a Buffer so we mustn't JSON.stringify
+   * it again). Returns null if Kafka isn't connected; caller must handle.
+   */
+  getRawProducer(): Producer | null {
+    return this.ready ? this.producer : null;
+  }
 }

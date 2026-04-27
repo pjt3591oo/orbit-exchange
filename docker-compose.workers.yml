@@ -1,0 +1,156 @@
+# ADR-0005 — bulkhead overlay.
+#
+# Default `pnpm dev` runs all workers in one host Node process. That's
+# fine for local development but in production/staging we want each
+# worker in its own container so an OOM/exception in (say) notification
+# doesn't take down audit-logger and outbox-relay along with it.
+#
+# Usage:
+#   pnpm bulkhead:up       # docker compose -f ... -f docker-compose.workers.yml up
+#   pnpm bulkhead:down
+#
+# Each worker container:
+#   - same image, same code (built once from apps/workers/Dockerfile)
+#   - WORKERS env restricts which goroutine starts (one per container)
+#   - distinct WORKERS_OPS_PORT so /metrics + /health + /ready don't collide
+#   - distinct host port mapping for prometheus scrape
+#
+# Adding/removing a worker:
+#   1. Add a new run<Worker> in apps/workers/src/<name>/
+#   2. Wire it in apps/workers/src/main.ts behind enabled.includes('<name>')
+#   3. Add a service block here with the matching WORKERS env
+#   4. Add a scrape target to infra/prometheus/prometheus.yml
+
+x-worker-base: &worker-base
+  build:
+    context: .
+    dockerfile: apps/workers/Dockerfile
+  image: orbit/workers:dev
+  restart: unless-stopped
+  environment:
+    NODE_ENV: production
+    DATABASE_URL: postgresql://orbit:orbit@postgres:5432/orbit?schema=public
+    REDIS_URL: redis://redis:6379
+    KAFKA_BROKERS: redpanda:29092
+    AWS_ENDPOINT: http://localstack:4566
+    AWS_REGION: ap-northeast-2
+    AWS_ACCESS_KEY_ID: test
+    AWS_SECRET_ACCESS_KEY: test
+    OTEL_EXPORTER_OTLP_ENDPOINT: http://tempo:4317
+    LOKI_URL: http://loki:3100
+    LOG_LEVEL: info
+  depends_on:
+    postgres:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+    redpanda:
+      condition: service_healthy
+
+services:
+  worker-fanout:
+    <<: *worker-base
+    container_name: orbit-worker-fanout
+    environment:
+      WORKERS: fanout
+      WORKERS_OPS_PORT: 3010
+    ports:
+      - "3010:3010"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3010/ready"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 30s
+
+  worker-candle:
+    <<: *worker-base
+    container_name: orbit-worker-candle
+    environment:
+      WORKERS: candle
+      WORKERS_OPS_PORT: 3011
+    ports:
+      - "3011:3011"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3011/ready"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 30s
+
+  worker-notification:
+    <<: *worker-base
+    container_name: orbit-worker-notification
+    environment:
+      WORKERS: notification
+      WORKERS_OPS_PORT: 3012
+      USER_EVENTS_SNS_TOPIC_ARN: ${USER_EVENTS_SNS_TOPIC_ARN:-}
+    ports:
+      - "3012:3012"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3012/ready"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 30s
+
+  worker-audit:
+    <<: *worker-base
+    container_name: orbit-worker-audit
+    environment:
+      WORKERS: audit
+      WORKERS_OPS_PORT: 3013
+      AUDIT_S3_BUCKET: orbit-audit-logs
+    ports:
+      - "3013:3013"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3013/ready"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 30s
+
+  worker-outbox:
+    <<: *worker-base
+    container_name: orbit-worker-outbox
+    environment:
+      WORKERS: outbox-relay
+      WORKERS_OPS_PORT: 3014
+    ports:
+      - "3014:3014"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3014/ready"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 30s
+
+  worker-retry:
+    <<: *worker-base
+    container_name: orbit-worker-retry
+    environment:
+      WORKERS: retry-30s
+      WORKERS_OPS_PORT: 3015
+    ports:
+      - "3015:3015"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3015/ready"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 30s
+
+  worker-dlq:
+    <<: *worker-base
+    container_name: orbit-worker-dlq
+    environment:
+      WORKERS: dlq-monitor
+      WORKERS_OPS_PORT: 3016
+    ports:
+      - "3016:3016"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3016/ready"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 30s

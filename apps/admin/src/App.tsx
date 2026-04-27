@@ -10,6 +10,7 @@ import { OrdersPage } from './pages/OrdersPage';
 import { TradesPage } from './pages/TradesPage';
 import { AssetsPage } from './pages/AssetsPage';
 import { AuditPage } from './pages/AuditPage';
+import { DlqPage } from './pages/DlqPage';
 
 export function App() {
   return (
@@ -71,6 +72,14 @@ export function App() {
           element={
             <Protected roles={['MARKET_OPS']}>
               <AssetsPage />
+            </Protected>
+          }
+        />
+        <Route
+          path="/dlq"
+          element={
+            <Protected roles={['SUPPORT_READ', 'MARKET_OPS']}>
+              <DlqPage />
             </Protected>
           }
         />

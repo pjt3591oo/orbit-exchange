@@ -8,6 +8,7 @@ const NAV: Array<{ to: string; label: string; roles?: string[] }> = [
   { to: '/orders', label: '주문', roles: ['SUPPORT_READ'] },
   { to: '/trades', label: '체결', roles: ['SUPPORT_READ'] },
   { to: '/assets', label: '자산', roles: ['MARKET_OPS'] },
+  { to: '/dlq', label: 'DLQ', roles: ['SUPPORT_READ', 'MARKET_OPS'] },
   { to: '/audit', label: '감사로그', roles: ['AUDITOR', 'SUPPORT_READ'] },
 ];
 

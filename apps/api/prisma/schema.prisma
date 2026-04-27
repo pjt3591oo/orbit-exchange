@@ -219,6 +219,40 @@ model IdempotencyKey {
   @@index([expiresAt])
 }
 
+/// DLQ ledger — the dlq-monitor worker mirrors every message landing on
+/// `orbit.dlq.v1` into this table so admins have a queryable surface
+/// (admin SPA `/dlq` page) for replay / dismiss workflows. ADR-0004 §D6.
+///
+/// `payload` is the original message bytes. `headers` carries the
+/// withRetryPolicy provenance (x-orbit-original-*, x-orbit-attempt,
+/// x-orbit-last-error, x-orbit-worker).
+///
+/// resolvedAt + resolution + resolvedBy are filled by the admin action.
+/// Rows are append-only otherwise; failed replays produce a NEW DlqEvent
+/// row when they fail again (not an UPDATE on this one).
+model DlqEvent {
+  id                BigInt    @id @default(autoincrement())
+  originalTopic     String
+  originalPartition Int
+  originalOffset    String
+  payload           Bytes
+  headers           Json
+  worker            String
+  lastError         String
+  attempt           Int
+  enqueuedAt        DateTime  @default(now())
+
+  resolvedAt        DateTime?
+  /// 'replayed' | 'dismissed' — set with resolvedAt by the admin UI.
+  resolution        String?
+  /// Keycloak `sub` of the admin who acted, mirroring AdminAuditLog.
+  resolvedBy        String?
+
+  @@index([resolvedAt, enqueuedAt])
+  @@index([originalTopic, enqueuedAt])
+  @@index([worker, enqueuedAt])
+}
+
 model Candle {
   id        BigInt         @id @default(autoincrement())
   market    String

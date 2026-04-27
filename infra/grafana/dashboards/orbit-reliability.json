@@ -1,0 +1,380 @@
+{
+  "panels": [
+    {
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
+      "id": 100,
+      "title": "Outbox (ADR-0002)",
+      "type": "row"
+    },
+    {
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": 0 },
+              { "color": "yellow", "value": 100 },
+              { "color": "red", "value": 1000 }
+            ]
+          }
+        }
+      },
+      "gridPos": { "h": 6, "w": 6, "x": 0, "y": 1 },
+      "id": 1,
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum(orbit_outbox_pending_count) or vector(0)"
+        }
+      ],
+      "title": "Outbox pending (전체)",
+      "description": "processedAt IS NULL 인 OutboxEvent 행 합. 100 초과 = WARN, 1000 초과 = CRITICAL.",
+      "type": "stat"
+    },
+    {
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": 0 },
+              { "color": "yellow", "value": 30 },
+              { "color": "red", "value": 300 }
+            ]
+          }
+        }
+      },
+      "gridPos": { "h": 6, "w": 6, "x": 6, "y": 1 },
+      "id": 2,
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "max(orbit_outbox_oldest_age_seconds) or vector(0)"
+        }
+      ],
+      "title": "Outbox oldest age",
+      "description": "가장 오래된 미처리 outbox 행의 나이. 30s 초과 = WARN. relay 가 밀리고 있다는 신호.",
+      "type": "stat"
+    },
+    {
+      "fieldConfig": { "defaults": { "unit": "ops" } },
+      "gridPos": { "h": 6, "w": 12, "x": 12, "y": 1 },
+      "id": 3,
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum by (topic) (rate(orbit_outbox_appended_total[1m]))",
+          "legendFormat": "appended {{topic}}"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum by (topic) (rate(orbit_outbox_relay_published_total{result=\"ok\"}[1m]))",
+          "legendFormat": "published {{topic}}"
+        }
+      ],
+      "title": "Outbox throughput — appended vs published /s",
+      "description": "두 라인이 평행하면 relay 가 따라잡고 있는 것. 차이가 누적되면 백로그.",
+      "type": "timeseries"
+    },
+    {
+      "fieldConfig": { "defaults": { "unit": "short" } },
+      "gridPos": { "h": 6, "w": 12, "x": 0, "y": 7 },
+      "id": 4,
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "orbit_outbox_pending_count",
+          "legendFormat": "{{topic}}"
+        }
+      ],
+      "title": "Outbox pending — by topic",
+      "type": "timeseries"
+    },
+    {
+      "fieldConfig": {
+        "defaults": {
+          "color": { "fixedColor": "red", "mode": "fixed" },
+          "unit": "ops"
+        }
+      },
+      "gridPos": { "h": 6, "w": 6, "x": 12, "y": 7 },
+      "id": 5,
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum by (topic) (rate(orbit_outbox_relay_published_total{result=\"error\"}[1m]))",
+          "legendFormat": "{{topic}}"
+        }
+      ],
+      "title": "Outbox relay publish errors /s",
+      "type": "timeseries"
+    },
+    {
+      "fieldConfig": { "defaults": { "unit": "ms" } },
+      "gridPos": { "h": 6, "w": 6, "x": 18, "y": 7 },
+      "id": 6,
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "histogram_quantile(0.95, sum by (le, topic) (rate(orbit_outbox_relay_publish_duration_ms_bucket[5m])))",
+          "legendFormat": "{{topic}} p95"
+        }
+      ],
+      "title": "Outbox relay publish p95 (ms)",
+      "type": "timeseries"
+    },
+
+    {
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 13 },
+      "id": 200,
+      "title": "Idempotency (ADR-0003)",
+      "type": "row"
+    },
+    {
+      "fieldConfig": { "defaults": { "unit": "ops" } },
+      "gridPos": { "h": 6, "w": 12, "x": 0, "y": 14 },
+      "id": 7,
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum by (path) (rate(orbit_idempotency_hit_total[5m]))",
+          "legendFormat": "hit {{path}}"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum by (path) (rate(orbit_idempotency_miss_total[5m]))",
+          "legendFormat": "miss {{path}}"
+        }
+      ],
+      "title": "Idempotency-Key — hit vs miss /s",
+      "description": "hit 비율이 0보다 의미있게 크면 클라이언트가 retry 하고 있는 것. 정상.",
+      "type": "timeseries"
+    },
+    {
+      "fieldConfig": {
+        "defaults": {
+          "color": { "fixedColor": "red", "mode": "fixed" },
+          "unit": "ops"
+        }
+      },
+      "gridPos": { "h": 6, "w": 6, "x": 12, "y": 14 },
+      "id": 8,
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum by (path) (rate(orbit_idempotency_conflict_total[5m]))",
+          "legendFormat": "{{path}}"
+        }
+      ],
+      "title": "Idempotency conflicts /s (409)",
+      "description": "같은 키로 다른 body 가 온 횟수. 0 이 아니면 클라이언트 버그 의심.",
+      "type": "timeseries"
+    },
+    {
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": 0 },
+              { "color": "red", "value": 1 }
+            ]
+          },
+          "unit": "short"
+        }
+      },
+      "gridPos": { "h": 6, "w": 6, "x": 18, "y": 14 },
+      "id": 9,
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum(increase(orbit_idempotency_conflict_total[1h])) or vector(0)"
+        }
+      ],
+      "title": "Conflicts (last 1h)",
+      "type": "stat"
+    },
+    {
+      "fieldConfig": { "defaults": { "unit": "ops" } },
+      "gridPos": { "h": 6, "w": 24, "x": 0, "y": 20 },
+      "id": 10,
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum by (worker) (rate(orbit_dedupe_hit_total[5m]))",
+          "legendFormat": "hit {{worker}}"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum by (worker) (rate(orbit_dedupe_miss_total[5m]))",
+          "legendFormat": "miss {{worker}}"
+        }
+      ],
+      "title": "Consumer dedupe — hit (중복 흡수) vs miss (정상 처리) /s",
+      "description": "hit 가 갑자기 폭증하면 outbox relay 가 같은 메시지를 반복 발행 중. relay 측 DB UPDATE 가 실패하고 있는지 확인.",
+      "type": "timeseries"
+    },
+
+    {
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 26 },
+      "id": 300,
+      "title": "DLQ + Retry (ADR-0004)",
+      "type": "row"
+    },
+    {
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": 0 },
+              { "color": "yellow", "value": 1 },
+              { "color": "red", "value": 100 }
+            ]
+          }
+        }
+      },
+      "gridPos": { "h": 6, "w": 6, "x": 0, "y": 27 },
+      "id": 11,
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "orbit_dlq_pending_count or vector(0)"
+        }
+      ],
+      "title": "DLQ pending (미해결)",
+      "description": "Admin SPA `/dlq` 에서 replay/dismiss 처리 필요한 행 수.",
+      "type": "stat"
+    },
+    {
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": 0 },
+              { "color": "yellow", "value": 3600 },
+              { "color": "red", "value": 86400 }
+            ]
+          }
+        }
+      },
+      "gridPos": { "h": 6, "w": 6, "x": 6, "y": 27 },
+      "id": 12,
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "orbit_dlq_oldest_age_seconds or vector(0)"
+        }
+      ],
+      "title": "DLQ oldest age",
+      "description": "1h 초과 = WARN, 1d 초과 = WARN. 운영자 개입이 늦어지고 있다는 신호.",
+      "type": "stat"
+    },
+    {
+      "fieldConfig": { "defaults": { "unit": "ops" } },
+      "gridPos": { "h": 6, "w": 12, "x": 12, "y": 27 },
+      "id": 13,
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum by (worker, target) (rate(orbit_worker_retry_enqueued_total[5m]))",
+          "legendFormat": "{{worker}} → {{target}}"
+        }
+      ],
+      "title": "Retry enqueue rate by worker × target",
+      "description": "target = inflight / orbit.retry.30s.v1 / orbit.dlq.v1. dlq 라인이 보이면 즉시 admin 페이지 확인.",
+      "type": "timeseries"
+    },
+    {
+      "fieldConfig": { "defaults": { "unit": "ops" } },
+      "gridPos": { "h": 6, "w": 12, "x": 0, "y": 33 },
+      "id": 14,
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum by (original_topic, worker) (rate(orbit_dlq_monitored_total[5m]))",
+          "legendFormat": "{{original_topic}} ({{worker}})"
+        }
+      ],
+      "title": "DLQ ingress /s — by original topic + worker",
+      "description": "어느 topic + worker 가 DLQ 를 가장 많이 만드는가.",
+      "type": "timeseries"
+    },
+    {
+      "fieldConfig": {
+        "defaults": {
+          "color": { "fixedColor": "red", "mode": "fixed" },
+          "unit": "short"
+        }
+      },
+      "gridPos": { "h": 6, "w": 12, "x": 12, "y": 33 },
+      "id": 15,
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum by (worker) (increase(orbit_worker_retry_enqueued_total{target=\"orbit.dlq.v1\"}[1h]))",
+          "legendFormat": "{{worker}}"
+        }
+      ],
+      "title": "DLQ enqueues (last 1h) by worker",
+      "type": "bargauge"
+    },
+
+    {
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 39 },
+      "id": 400,
+      "title": "Readiness (ADR-0001)",
+      "type": "row"
+    },
+    {
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": 0 },
+              { "color": "green", "value": 1 }
+            ]
+          },
+          "unit": "none",
+          "mappings": [
+            { "type": "value", "options": { "0": { "text": "DOWN", "color": "red" }, "1": { "text": "UP", "color": "green" } } }
+          ]
+        }
+      },
+      "gridPos": { "h": 5, "w": 24, "x": 0, "y": 40 },
+      "id": 16,
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "up{service=~\"orbit-.*\"}",
+          "legendFormat": "{{service}} ({{instance}})"
+        }
+      ],
+      "title": "Service up — Prometheus scrape state",
+      "description": "Prometheus 가 /metrics 를 긁을 수 있는지 (process 가 살아있는지). /ready 와 별개의 liveness 신호.",
+      "type": "state-timeline"
+    }
+  ],
+  "refresh": "10s",
+  "schemaVersion": 39,
+  "tags": [
+    "orbit",
+    "reliability",
+    "outbox",
+    "idempotency",
+    "dlq"
+  ],
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "timezone": "browser",
+  "title": "ORBIT — Reliability (Outbox / Idempotency / DLQ / Readiness)",
+  "uid": "orbit-reliability"
+}

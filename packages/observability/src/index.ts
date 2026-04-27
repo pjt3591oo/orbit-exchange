@@ -20,3 +20,4 @@ export * from './pino-otel.js';
 export * from './pino-transport.js';
 export * from './kafka-trace.js';
 export * from './dedupe.js';
+export * from './retry-policy.js';

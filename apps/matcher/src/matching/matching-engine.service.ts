@@ -22,6 +22,21 @@ export class MatchingEngineService implements OnModuleInit {
   private readonly log = new Logger(MatchingEngineService.name);
   private readonly books = new Map<MarketSymbol, Orderbook>();
   private readonly queues = new Map<MarketSymbol, PQueue>();
+  /**
+   * ADR-0001 §D2 — readiness flag.
+   *
+   * Flipped to true only after `replayOpenOrders()` has rebuilt every
+   * in-memory book from DB. The Kafka consumer waits on this before
+   * subscribing (see CommandConsumerService.onModuleInit), and the
+   * `/ready` HTTP probe gates load-balancer traffic on it.
+   *
+   * Read order matters: NestJS's `OnModuleInit` runs all modules in
+   * dependency order, so MatchingEngineService.onModuleInit completes
+   * before CommandConsumerService.onModuleInit starts. The flag makes
+   * that ordering an *explicit invariant* rather than something that
+   * silently breaks if the lifecycle changes.
+   */
+  private _ready = false;
 
   constructor(private readonly prisma: PrismaService) {}
 
@@ -29,7 +44,13 @@ export class MatchingEngineService implements OnModuleInit {
     const markets = await this.prisma.market.findMany({ where: { enabled: true } });
     for (const m of markets) this.ensureBook(m.symbol);
     await this.replayOpenOrders();
+    this._ready = true;
     this.log.log(`matching engines ready: ${[...this.books.keys()].join(', ')}`);
+  }
+
+  /** True once boot-time replay has finished. See class doc on `_ready`. */
+  isReady(): boolean {
+    return this._ready;
   }
 
   getEngine(symbol: string): Orderbook {

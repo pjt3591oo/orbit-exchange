@@ -8,7 +8,7 @@ import {
   NestInterceptor,
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
-import { Observable, from, of, switchMap, tap } from 'rxjs';
+import { Observable, from, mergeMap, of, switchMap } from 'rxjs';
 import { metrics } from '@orbit/observability';
 import { PrismaService } from '../prisma/prisma.service';
 
@@ -98,14 +98,30 @@ export class IdempotencyInterceptor implements NestInterceptor {
           return of(existing.responseBody);
         }
 
-        // Miss — run the handler then persist.
+        // Miss — run the handler, persist BEFORE returning.
+        //
+        // We deliberately await the persist (via mergeMap) instead of a
+        // fire-and-forget tap. Without this, two requests with the same
+        // Idempotency-Key arriving < 100ms apart can both execute the
+        // handler before the first persist commits — at which point the
+        // unique constraint fails the second persist but the second
+        // handler has ALREADY produced an Order row + outbox row, double-
+        // booking the user. The await makes the response wait until the
+        // cache row is committed; the second call sees it on lookup.
+        // Cost: +1 small INSERT in the request critical path. Acceptable.
         M.idempotencyMiss.inc(labels);
         return next.handle().pipe(
-          tap((body) => {
-            // Persist after the handler resolves. We don't await this in
-            // the response path — failure to cache shouldn't fail the
-            // user-visible request.
-            void this.persist(userId, rawKey, method, path, requestHash, res.statusCode, body);
+          mergeMap(async (body) => {
+            await this.persist(
+              userId,
+              rawKey,
+              method,
+              path,
+              requestHash,
+              res.statusCode,
+              body,
+            );
+            return body;
           }),
         );
       }),

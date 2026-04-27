@@ -10,6 +10,18 @@ export const KAFKA_TOPICS = {
   ORDERS: 'orbit.orders.v1',
   ORDERBOOK: 'orbit.orderbook.v1',
   USER_EVENTS: 'orbit.user-events.v1',
+  /**
+   * 30-second retry tier (ADR-0004 §D2). Workers republish here when
+   * in-flight retries are exhausted but the error is classified as
+   * transient. The retry-30s worker waits then republishes back to the
+   * original topic.
+   */
+  RETRY_30S: 'orbit.retry.30s.v1',
+  /**
+   * Dead-letter queue (ADR-0004 §D2). Terminal failures land here. The
+   * dlq-monitor worker mirrors these into the DlqEvent table for
+   * operator inspection / replay via the admin UI.
+   */
   DLQ: 'orbit.dlq.v1',
 } as const;
 
@@ -20,6 +32,10 @@ export const CONSUMER_GROUPS = {
   MARKET_DATA_FANOUT: 'orbit.market-data-fanout',
   NOTIFICATION: 'orbit.notification',
   AUDIT_LOGGER: 'orbit.audit-logger',
+  /** ADR-0004 — 30-second retry tier consumer. */
+  RETRY_30S: 'orbit.retry-30s',
+  /** ADR-0004 — DLQ → Postgres mirror for admin replay UI. */
+  DLQ_MONITOR: 'orbit.dlq-monitor',
 } as const;
 
 export const REDIS_CHANNELS = {

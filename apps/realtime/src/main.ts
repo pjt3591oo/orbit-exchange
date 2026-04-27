@@ -7,6 +7,8 @@ import { NestFactory } from '@nestjs/core';
 import { Logger } from 'nestjs-pino';
 import { AppModule } from './app.module';
 import { metrics, metricsHandler } from '@orbit/observability';
+import type Redis from 'ioredis';
+import { REDIS_CLIENT } from './redis/redis.module';
 
 async function bootstrap() {
   metrics.bindMetrics('orbit-realtime');
@@ -19,9 +21,28 @@ async function bootstrap() {
   });
   app.enableShutdownHooks();
 
+  const redis = app.get<Redis>(REDIS_CLIENT);
+
   // /metrics at root. /health is already provided by HealthController.
   const httpAdapter = app.getHttpAdapter().getInstance();
   httpAdapter.get('/metrics', metricsHandler);
+  // ADR-0001 §D3 — /ready 200 only when Redis pings (the realtime
+  // service relies on Redis pub/sub for fanout; without Redis it has
+  // nothing to deliver).
+  httpAdapter.get('/ready', async (_req: unknown, res: { status: (n: number) => { json: (b: unknown) => void } }) => {
+    let redisReachable = false;
+    try {
+      const pong = await redis.ping();
+      redisReachable = pong === 'PONG';
+    } catch {
+      redisReachable = false;
+    }
+    res.status(redisReachable ? 200 : 503).json({
+      ready: redisReachable,
+      details: { redisReachable },
+      ts: new Date().toISOString(),
+    });
+  });
 
   const port = Number(process.env.REALTIME_PORT ?? 3001);
   await app.listen(port);

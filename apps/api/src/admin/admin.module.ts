@@ -9,6 +9,7 @@ import { AdminMarketsModule } from './markets/admin-markets.module';
 import { AdminAssetsModule } from './assets/admin-assets.module';
 import { AdminOrdersModule } from './orders/admin-orders.module';
 import { AdminTradesModule } from './trades/admin-trades.module';
+import { AdminDlqModule } from './dlq/admin-dlq.module';
 
 /**
  * Roll-up of all /api/v1/admin/* routes. Mounted from AppModule so the admin
@@ -30,6 +31,7 @@ import { AdminTradesModule } from './trades/admin-trades.module';
     AdminAssetsModule,
     AdminOrdersModule,
     AdminTradesModule,
+    AdminDlqModule,
   ],
   controllers: [AdminAuditController],
 })
