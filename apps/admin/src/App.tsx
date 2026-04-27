@@ -11,6 +11,7 @@ import { TradesPage } from './pages/TradesPage';
 import { AssetsPage } from './pages/AssetsPage';
 import { AuditPage } from './pages/AuditPage';
 import { DlqPage } from './pages/DlqPage';
+import { OutboxPage } from './pages/OutboxPage';
 
 export function App() {
   return (
@@ -72,6 +73,14 @@ export function App() {
           element={
             <Protected roles={['MARKET_OPS']}>
               <AssetsPage />
+            </Protected>
+          }
+        />
+        <Route
+          path="/outbox"
+          element={
+            <Protected roles={['SUPPORT_READ', 'MARKET_OPS']}>
+              <OutboxPage />
             </Protected>
           }
         />

@@ -60,6 +60,19 @@ export function AuditPage() {
           </thead>
           <tbody>
             {isLoading && <tr><td colSpan={7} style={{ padding: 12, color: 'var(--text-3)' }}>로딩…</td></tr>}
+            {!isLoading && data && data.items.length === 0 && (
+              <tr>
+                <td colSpan={7} style={{ padding: 16, color: 'var(--text-3)' }}>
+                  <div style={{ fontWeight: 600, marginBottom: 4 }}>기록 없음</div>
+                  <div style={{ fontSize: 11, lineHeight: 1.6 }}>
+                    감사 로그는 <code style={{
+                      background: 'var(--bg-alt)', padding: '0 4px', borderRadius: 3,
+                    }}>@AdminAction</code> 데코레이터가 붙은 어드민 mutation 이 성공할 때마다 추가됩니다 — 사용자 동결 / 지갑 조정 / 마켓 토글 / 주문 강제 취소 / DLQ replay / Outbox retry 등.
+                    <br />아직 그런 mutation 이 발생하지 않았습니다. 필터를 비우고 다시 조회하거나, 다른 어드민 페이지에서 조작을 한 번 수행해 보세요.
+                  </div>
+                </td>
+              </tr>
+            )}
             {data?.items.map((r) => (
               <>
                 <tr key={r.id}>
