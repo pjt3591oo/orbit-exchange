@@ -230,37 +230,55 @@ export class OrderService {
       const reserveBase = dto.side === 'ASK';
       const assetToLock = reserveBase ? market.baseAsset : market.quoteAsset;
       const reserveAmount = reserveBase ? quantity : limitPrice!.mul(quantity);
-      const wallet = await tx.wallet.findUnique({
-        where: { userId_asset: { userId, asset: assetToLock } },
-      });
-      if (!wallet) throw new BadRequestException(`no ${assetToLock} wallet`);
-      if (new Decimal(wallet.balance.toString()).lt(reserveAmount)) {
-        throw new BadRequestException('insufficient balance');
-      }
-      await tx.wallet.update({
-        where: { id: wallet.id },
-        data: {
-          balance: { decrement: reserveAmount.toString() as unknown as Prisma.Decimal },
-          locked: { increment: reserveAmount.toString() as unknown as Prisma.Decimal },
-        },
-      });
+      await this.atomicLock(tx, userId, assetToLock, reserveAmount);
     } else if (dto.side === 'ASK') {
-      const wallet = await tx.wallet.findUnique({
-        where: { userId_asset: { userId, asset: market.baseAsset } },
-      });
-      if (!wallet) throw new BadRequestException(`no ${market.baseAsset} wallet`);
-      if (new Decimal(wallet.balance.toString()).lt(quantity)) {
-        throw new BadRequestException('insufficient base balance');
-      }
-      await tx.wallet.update({
-        where: { id: wallet.id },
-        data: {
-          balance: { decrement: quantity.toString() as unknown as Prisma.Decimal },
-          locked: { increment: quantity.toString() as unknown as Prisma.Decimal },
-        },
-      });
+      await this.atomicLock(tx, userId, market.baseAsset, quantity);
     }
     // MARKET BID: no upfront lock — matcher deducts per fill.
+  }
+
+  /**
+   * Atomic balance check + lock in a single SQL UPDATE.
+   *
+   * Why this is a raw query instead of two Prisma calls:
+   *
+   *   The naive "findUnique → if balance < amt throw → update decrement"
+   *   pattern races under ReadCommitted. Two concurrent SUBMITs from the
+   *   same user both read balance=100, both pass `if 100 < 80`, both
+   *   COMMIT `UPDATE balance = balance - 80`. Postgres serialises the
+   *   UPDATEs at row-lock level but doesn't re-validate the application's
+   *   stale check — final balance = -60.
+   *
+   *   Folding the check INTO the UPDATE (`WHERE balance >= $amt`) makes
+   *   it atomic: zero rows updated → throw, otherwise the decrement IS
+   *   the check having passed against the actually-current balance.
+   *
+   * Failure modes both surface as "insufficient balance":
+   *   - wallet row missing
+   *   - balance < amount at lock time
+   *
+   * The DB also has CHECK (balance >= 0) as defense in depth, so even
+   * if a future code path forgets to use this helper, the constraint
+   * rejects the negative balance.
+   */
+  private async atomicLock(
+    tx: Prisma.TransactionClient,
+    userId: string,
+    asset: string,
+    amount: Decimal,
+  ): Promise<void> {
+    const amt = amount.toString();
+    const updated = await tx.$executeRaw`
+      UPDATE "Wallet"
+         SET balance = balance - ${amt}::numeric,
+             locked  = locked  + ${amt}::numeric
+       WHERE "userId" = ${userId}
+         AND asset    = ${asset}
+         AND balance >= ${amt}::numeric
+    `;
+    if (updated === 0) {
+      throw new BadRequestException('insufficient balance');
+    }
   }
 
   private presentOrder(o: Prisma.OrderGetPayload<{}>) {

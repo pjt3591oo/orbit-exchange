@@ -82,7 +82,11 @@ model Wallet {
   id       String  @id @default(cuid())
   userId   String
   asset    String
+  /// MUST stay >= 0 — enforced by Postgres CHECK constraint (see migration
+  /// 20260427120000_wallet_non_negative). Defense in depth: even if some
+  /// new mutation forgets the conditional UPDATE pattern, the DB rejects.
   balance  Decimal @default(0) @db.Decimal(28, 12)
+  /// MUST stay >= 0 — same CHECK constraint protection.
   locked   Decimal @default(0) @db.Decimal(28, 12)
   user     User    @relation(fields: [userId], references: [id], onDelete: Cascade)
   assetRef Asset   @relation(fields: [asset], references: [symbol])

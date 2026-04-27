@@ -35,6 +35,23 @@
  *         worker / lastError / attempt
  *      6. `docker start orbit-localstack` (operator recovery)
  *
+ *   D. ORDER LOCK RACE — concurrent SUBMITs for the same user
+ *      Provisions a dedicated bot with KRW balance set to exactly
+ *      `RACE_CAP × per_order` (e.g. 4 × 25,000 = 100,000). Fires
+ *      `RACE_TOTAL` (default 10) concurrent LIMIT BIDs in one
+ *      Promise.all so they hit the API in a tight window.
+ *
+ *      Under the buggy check-then-update pattern, several would see
+ *      stale balance and pass the check → UPDATE goes negative → wallet
+ *      ends up at e.g. balance=-150,000.
+ *
+ *      Under the fix (conditional UPDATE + CHECK constraint):
+ *        - exactly RACE_CAP requests return 2xx (Order created),
+ *        - the rest return 400 with "insufficient balance",
+ *        - final balance = 0, locked = initial.
+ *      The DB CHECK constraint is the last-line guarantee — even if the
+ *      code is buggy the constraint rejects negative writes.
+ *
  * Pre-conditions: same as smoke-reliability + the user has docker access
  * to start/stop containers.
  *
@@ -124,6 +141,9 @@ async function main() {
   }
   if (CFG.scenarios.has('C')) {
     await scenarioC_DlqEndToEnd(prisma);
+  }
+  if (CFG.scenarios.has('D')) {
+    await scenarioD_OrderLockRace(prisma);
   }
 
   await prisma.$disconnect();
@@ -460,6 +480,156 @@ async function waitForDlqMatchingEvent(
   }
   return { found: false, row: null };
 }
+
+/* ───────────────── scenario D — order lock race ───────────────── */
+
+interface RaceCfg {
+  email: string;
+  password: string;
+  /** number of orders that *should* fit within the seeded balance */
+  cap: number;
+  /** total concurrent submissions (cap + extras to flush race window) */
+  total: number;
+  /** price × qty for one order, in KRW. Multiple of tickSize=1000. */
+  perOrderKrw: number;
+}
+
+const RACE_CFG: RaceCfg = {
+  email: process.env.RACE_EMAIL ?? 'race-bot@orbit.dev',
+  password: process.env.RACE_PW ?? 'orbit-bot-pw',
+  cap: Number(process.env.RACE_CAP ?? 4),
+  total: Number(process.env.RACE_TOTAL ?? 10),
+  // 250_000_000 KRW × 0.0001 BTC = 25_000 KRW per order
+  // (price respects tickSize=1000, qty respects stepSize=1e-8)
+  perOrderKrw: 25_000,
+};
+
+async function scenarioD_OrderLockRace(prisma: InstanceType<typeof PrismaClient>) {
+  header('D. Order lock race — concurrent SUBMITs against tight balance');
+
+  const exactBalance = RACE_CFG.cap * RACE_CFG.perOrderKrw;
+  console.log(
+    `  cap=${RACE_CFG.cap}  total=${RACE_CFG.total}  perOrder=${RACE_CFG.perOrderKrw} KRW  seed=${exactBalance} KRW`,
+  );
+
+  // 1. Provision a dedicated race-bot so we don't disturb the smoke bot.
+  const token = await provisionRaceBot(prisma, exactBalance);
+  record('race-bot ready with exact balance', true, `${exactBalance} KRW`);
+
+  // 2. Fire RACE_TOTAL concurrent LIMIT BIDs. Each requires
+  //    perOrderKrw to lock, so at most CAP can succeed.
+  const submitOnce = (key: string) =>
+    fetch(`${CFG.apiUrl}/api/v1/orders`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+        'Idempotency-Key': key,
+      },
+      body: JSON.stringify({
+        market: CFG.market,
+        side: 'BID',
+        type: 'LIMIT',
+        price: '250000000',  // 250M KRW (multiple of tickSize=1000)
+        quantity: '0.0001',  // 0.0001 BTC (multiple of stepSize=1e-8)
+      }),
+    }).then(async (r) => ({ status: r.status, body: await r.json().catch(() => null) }));
+
+  const keys = Array.from({ length: RACE_CFG.total }, () => randomUUID());
+  const results = await Promise.all(keys.map((k) => submitOnce(k)));
+
+  const ok = results.filter((r) => r.status >= 200 && r.status < 300).length;
+  const insufficientBalance = results.filter(
+    (r) =>
+      r.status === 400 &&
+      typeof r.body === 'object' &&
+      r.body !== null &&
+      String((r.body as { message?: unknown }).message ?? '').includes('insufficient'),
+  ).length;
+  const other = results.length - ok - insufficientBalance;
+
+  console.log(`  results: ok=${ok}  insufficient=${insufficientBalance}  other=${other}`);
+  results
+    .filter((r) => r.status >= 500)
+    .forEach((r) => console.log(`    [debug] 5xx body:`, r.body));
+
+  // 3. Assert: exactly cap succeeded.
+  record(
+    `exactly ${RACE_CFG.cap} orders accepted`,
+    ok === RACE_CFG.cap,
+    `ok=${ok} expected=${RACE_CFG.cap}`,
+  );
+  record(
+    `remaining ${RACE_CFG.total - RACE_CFG.cap} orders rejected with 'insufficient balance'`,
+    insufficientBalance === RACE_CFG.total - RACE_CFG.cap,
+    `insufficient=${insufficientBalance} expected=${RACE_CFG.total - RACE_CFG.cap}`,
+  );
+  record('no 5xx responses', other === 0, `other=${other}`);
+
+  // 4. Final wallet state — balance must be 0, locked must equal seed.
+  const user = await prisma.user.findUnique({ where: { email: RACE_CFG.email } });
+  if (!user) throw new Error('race-bot vanished');
+  const krw = await prisma.wallet.findUnique({
+    where: { userId_asset: { userId: user.id, asset: 'KRW' } },
+  });
+  if (!krw) throw new Error('race-bot KRW wallet missing');
+
+  const balance = Number(krw.balance.toString());
+  const locked = Number(krw.locked.toString());
+  console.log(`  final wallet: balance=${balance}  locked=${locked}`);
+
+  // The most important assertion — the whole point of the fix.
+  record('balance >= 0 (CHECK constraint defense)', balance >= 0, `balance=${balance}`);
+  record('locked >= 0', locked >= 0, `locked=${locked}`);
+  record(
+    `balance settled to 0 (all ${RACE_CFG.cap} reserves succeeded)`,
+    balance === 0,
+    `balance=${balance}`,
+  );
+  record(
+    `locked equals seed (${exactBalance})`,
+    locked === exactBalance,
+    `locked=${locked} expected=${exactBalance}`,
+  );
+}
+
+async function provisionRaceBot(
+  prisma: InstanceType<typeof PrismaClient>,
+  exactKrw: number,
+): Promise<string> {
+  // Sign up if missing.
+  await fetch(`${CFG.apiUrl}/api/v1/auth/signup`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email: RACE_CFG.email, password: RACE_CFG.password }),
+  }).catch(() => null);
+
+  const r = await fetch(`${CFG.apiUrl}/api/v1/auth/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email: RACE_CFG.email, password: RACE_CFG.password }),
+  });
+  if (!r.ok) throw new Error(`race-bot login failed: ${r.status}`);
+  const j = (await r.json()) as { accessToken?: string; token?: string };
+  const token = j.accessToken ?? j.token;
+  if (!token) throw new Error('race-bot token missing');
+
+  const user = await prisma.user.findUnique({ where: { email: RACE_CFG.email } });
+  if (!user) throw new Error('race-bot user missing post-login');
+
+  // Reset KRW wallet to EXACTLY the seed amount + zero locked. This is
+  // the critical setup — a non-zero pre-existing locked would invalidate
+  // the assertions.
+  await prisma.wallet.upsert({
+    where: { userId_asset: { userId: user.id, asset: 'KRW' } },
+    create: { userId: user.id, asset: 'KRW', balance: String(exactKrw), locked: '0' },
+    update: { balance: String(exactKrw), locked: '0' },
+  });
+
+  return token;
+}
+
+/* ───────────────── shared helper used by C/D ───────────────── */
 
 async function readMetric(url: string, re: RegExp): Promise<number> {
   try {
