@@ -138,4 +138,69 @@ export const Metrics = {
     buckets: SHORT_BUCKETS_MS,
     registers: [registry],
   }),
+
+  /* Outbox (ADR-0002) ------------------------------------------- */
+  outboxAppended: new Counter({
+    name: 'orbit_outbox_appended_total',
+    help: 'OutboxEvent rows inserted by producers (api/matcher) inside their transactions.',
+    labelNames: ['topic'] as const,
+    registers: [registry],
+  }),
+  outboxPending: new Gauge({
+    name: 'orbit_outbox_pending_count',
+    help: 'Outbox rows with processedAt IS NULL (relay backlog).',
+    labelNames: ['topic'] as const,
+    registers: [registry],
+  }),
+  outboxOldestAge: new Gauge({
+    name: 'orbit_outbox_oldest_age_seconds',
+    help: 'Age of the oldest unprocessed outbox row in seconds.',
+    labelNames: ['topic'] as const,
+    registers: [registry],
+  }),
+  outboxRelayPublished: new Counter({
+    name: 'orbit_outbox_relay_published_total',
+    help: 'Outbox rows successfully published to Kafka by the relay.',
+    labelNames: ['topic', 'result'] as const, // result = ok | error
+    registers: [registry],
+  }),
+  outboxRelayPublishDuration: new Histogram({
+    name: 'orbit_outbox_relay_publish_duration_ms',
+    help: 'producer.send() latency observed by the outbox relay.',
+    labelNames: ['topic'] as const,
+    buckets: SHORT_BUCKETS_MS,
+    registers: [registry],
+  }),
+
+  /* Idempotency (ADR-0003) -------------------------------------- */
+  idempotencyHit: new Counter({
+    name: 'orbit_idempotency_hit_total',
+    help: 'HTTP requests served from the IdempotencyKey cache (key+body match).',
+    labelNames: ['method', 'path'] as const,
+    registers: [registry],
+  }),
+  idempotencyMiss: new Counter({
+    name: 'orbit_idempotency_miss_total',
+    help: 'HTTP requests where Idempotency-Key was new — handler executed.',
+    labelNames: ['method', 'path'] as const,
+    registers: [registry],
+  }),
+  idempotencyConflict: new Counter({
+    name: 'orbit_idempotency_conflict_total',
+    help: 'Idempotency-Key reused with a different body — 409 returned.',
+    labelNames: ['method', 'path'] as const,
+    registers: [registry],
+  }),
+  dedupeHit: new Counter({
+    name: 'orbit_dedupe_hit_total',
+    help: 'Worker-side dedupe — eventId already seen, handler skipped.',
+    labelNames: ['worker'] as const,
+    registers: [registry],
+  }),
+  dedupeMiss: new Counter({
+    name: 'orbit_dedupe_miss_total',
+    help: 'Worker-side dedupe — eventId fresh, handler executed.',
+    labelNames: ['worker'] as const,
+    registers: [registry],
+  }),
 };

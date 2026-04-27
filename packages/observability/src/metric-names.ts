@@ -21,4 +21,18 @@ export const METRIC_NAMES = {
 
   WORKER_MESSAGES_PROCESSED: 'orbit_worker_messages_processed_total',
   WORKER_HANDLER_DURATION: 'orbit_worker_handler_duration_ms',
+
+  // ADR-0002 outbox
+  OUTBOX_APPENDED: 'orbit_outbox_appended_total',
+  OUTBOX_PENDING: 'orbit_outbox_pending_count',
+  OUTBOX_OLDEST_AGE: 'orbit_outbox_oldest_age_seconds',
+  OUTBOX_RELAY_PUBLISHED: 'orbit_outbox_relay_published_total',
+  OUTBOX_RELAY_PUBLISH_DURATION: 'orbit_outbox_relay_publish_duration_ms',
+
+  // ADR-0003 idempotency
+  IDEMPOTENCY_HIT: 'orbit_idempotency_hit_total',
+  IDEMPOTENCY_MISS: 'orbit_idempotency_miss_total',
+  IDEMPOTENCY_CONFLICT: 'orbit_idempotency_conflict_total',
+  DEDUPE_HIT: 'orbit_dedupe_hit_total',
+  DEDUPE_MISS: 'orbit_dedupe_miss_total',
 } as const;

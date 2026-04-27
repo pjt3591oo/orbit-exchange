@@ -7,10 +7,11 @@ import { runCandleAggregator } from './candle-aggregator';
 import { runMarketDataFanout } from './market-data-fanout';
 import { runNotification } from './notification';
 import { runAuditLogger } from './audit-logger';
+import { runOutboxRelay } from './outbox-relay';
 import { logger } from './lib/logger';
 
 async function main() {
-  const enabled = (process.env.WORKERS ?? 'candle,fanout,notification,audit').split(',').map((s) => s.trim());
+  const enabled = (process.env.WORKERS ?? 'candle,fanout,notification,audit,outbox-relay').split(',').map((s) => s.trim());
   logger.info({ enabled }, 'starting workers');
 
   const opsPort = Number(process.env.WORKERS_OPS_PORT ?? 3003);
@@ -26,6 +27,8 @@ async function main() {
   if (enabled.includes('fanout')) tasks.push(runMarketDataFanout());
   if (enabled.includes('notification')) tasks.push(runNotification());
   if (enabled.includes('audit')) tasks.push(runAuditLogger());
+  // ADR-0002: drains OutboxEvent rows produced by api/matcher into Kafka.
+  if (enabled.includes('outbox-relay')) tasks.push(runOutboxRelay());
   await Promise.all(tasks);
 }
 

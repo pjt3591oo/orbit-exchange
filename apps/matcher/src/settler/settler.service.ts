@@ -1,10 +1,20 @@
+import { randomUUID } from 'node:crypto';
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import Decimal from 'decimal.js';
 import type { Orderbook } from 'orderbook-match-engine';
+import {
+  KAFKA_TOPICS,
+  type OrderCancelCommand,
+  type OrderEvent,
+  type OrderSubmitCommand,
+  type OrderbookEvent,
+  type TradeEvent,
+  type UserEvent,
+} from '@orbit/shared';
 import { PrismaService } from '../prisma/prisma.service';
 import { MatchingEngineService } from '../matching/matching-engine.service';
-import type { OrderCancelCommand, OrderSubmitCommand } from '@orbit/shared';
+import { OutboxPublisherService } from '../kafka/outbox-publisher.service';
 
 const BP = new Decimal(10000);
 
@@ -29,6 +39,13 @@ export interface SettleCancelResult {
 }
 
 /**
+ * Local monotonic counter for the orderbook event seq# — restarted on
+ * matcher boot. Consumers ignore the absolute value; they only use it for
+ * gap detection within a single matcher generation.
+ */
+let orderbookSeq = 0;
+
+/**
  * Owns the matching + settlement transaction. The API has already locked
  * funds and created the Order(OPEN) row before publishing the SUBMIT command;
  * this service runs the actual matching against the in-memory book and
@@ -47,6 +64,7 @@ export class SettlerService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly matching: MatchingEngineService,
+    private readonly outbox: OutboxPublisherService,
   ) {}
 
   /** Process a SUBMIT command (already serialized via p-queue by caller). */
@@ -64,6 +82,17 @@ export class SettlerService {
       this.log.warn(`settle skip — order not in DB: ${cmd.orderId}`);
       return null;
     }
+
+    // ADR-0003 §D3 — commandId mismatch means this command was synthesised
+    // for a different Order than the one currently in DB. Should be impossible
+    // with outbox + unique constraint, but log and skip if it happens.
+    if (order.commandId && order.commandId !== cmd.commandId) {
+      this.log.warn(
+        `settle skip — commandId mismatch: db=${order.commandId} cmd=${cmd.commandId}`,
+      );
+      return null;
+    }
+
     // If the order was already touched (e.g. duplicate command), short-circuit.
     if (order.status === 'FILLED' || order.status === 'CANCELLED') {
       this.log.debug(`settle skip — order already terminal: ${cmd.orderId}/${order.status}`);
@@ -73,6 +102,10 @@ export class SettlerService {
     const book = this.matching.getEngine(cmd.symbol);
     const makerFeeRate = new Decimal(market.makerFeeBp).div(BP);
     const takerFeeRate = new Decimal(market.takerFeeBp).div(BP);
+    // Stable matchId prefix for every Trade row produced by this command.
+    // If the same command somehow re-enters the settler, the unique
+    // constraint on Trade.matchId catches double-settlement (ADR-0003 §D5).
+    const matchCtx: MatchIdContext = { commandId: cmd.commandId, matchIdx: 0 };
 
     const result = await this.prisma.$transaction(
       async (tx) => {
@@ -94,6 +127,7 @@ export class SettlerService {
             res.trades as unknown as EngineTrade[],
             makerFeeRate,
             takerFeeRate,
+            matchCtx,
           );
           const leaveQty = new Decimal(res.order.leaveQuantity.toString());
           await this.updateOrderAfterMatch(
@@ -113,10 +147,18 @@ export class SettlerService {
             order.userId,
             makerFeeRate,
             takerFeeRate,
+            matchCtx,
           );
         }
 
         const persisted = await tx.order.findUnique({ where: { id: order.id } });
+
+        // ADR-0002 — publish events via outbox INSIDE the same transaction.
+        // If the process crashes between this line and the outer return, the
+        // tx rolls back and no events leak. If the process crashes after
+        // commit but before relay publishes, the rows wait in the outbox.
+        await this.publishSubmitEvents(tx, persisted!, trades, cmd.symbol, book);
+
         return { order: persisted!, trades };
       },
       { isolationLevel: 'ReadCommitted', timeout: 10_000 },
@@ -174,10 +216,14 @@ export class SettlerService {
         }
       }
 
-      return tx.order.update({
+      const persisted = await tx.order.update({
         where: { id: order.id },
         data: { status: 'CANCELLED' },
       });
+
+      // Publish cancel events via outbox in the same tx.
+      await this.publishCancelEvents(tx, persisted, book);
+      return persisted;
     });
 
     return { order: updated };
@@ -195,6 +241,7 @@ export class SettlerService {
     userId: string,
     makerFeeRate: Decimal,
     takerFeeRate: Decimal,
+    matchCtx: MatchIdContext,
   ) {
     const snapshot = book.getOrderbook();
     const levels = side === 'BID' ? snapshot.asks : snapshot.bids;
@@ -222,6 +269,7 @@ export class SettlerService {
         sweep.trades as unknown as EngineTrade[],
         makerFeeRate,
         takerFeeRate,
+        matchCtx,
       );
       collected.push(...fills);
       remaining = remaining.sub(take);
@@ -262,6 +310,7 @@ export class SettlerService {
     trades: EngineTrade[],
     makerFeeRate: Decimal,
     takerFeeRate: Decimal,
+    matchCtx: MatchIdContext,
   ) {
     const out: Prisma.TradeGetPayload<{}>[] = [];
     for (const t of trades) {
@@ -274,6 +323,11 @@ export class SettlerService {
       const makerFee = qty.mul(makerFeeRate);
       const takerFee = qty.mul(takerFeeRate);
       const quoteAmt = price.mul(qty);
+
+      // matchId is deterministic across replays of the same command —
+      // index increments across the entire command's trades (so MARKET
+      // sweeps that produce multiple settleTrades() calls keep counting).
+      const matchId = `${matchCtx.commandId}#${matchCtx.matchIdx++}`;
 
       const tradeRow = await tx.trade.create({
         data: {
@@ -289,6 +343,7 @@ export class SettlerService {
           takerUserId: takerOrder.userId,
           makerFee: new Prisma.Decimal(makerFee.toString()),
           takerFee: new Prisma.Decimal(takerFee.toString()),
+          matchId,
         },
       });
 
@@ -410,4 +465,198 @@ export class SettlerService {
       },
     });
   }
+
+  /* ───────────────── outbox publishers (ADR-0002) ───────────────── */
+
+  /**
+   * Emit ORDER_ADDED + per-trade TRADE/USER_EVENT + ORDERBOOK_SNAPSHOT.
+   *
+   * Inside the settle transaction so:
+   *   - tx commit guarantees event durability,
+   *   - tx rollback cleanly discards events with the rolled-back DB state.
+   *
+   * Each event carries an `eventId` (UUID) so consumers using `withDedupe`
+   * can collapse duplicate delivery (ADR-0003 §D4).
+   */
+  private async publishSubmitEvents(
+    tx: Prisma.TransactionClient,
+    order: Prisma.OrderGetPayload<{}>,
+    trades: Prisma.TradeGetPayload<{}>[],
+    symbol: string,
+    book: Orderbook,
+  ) {
+    const orderEvt: OrderEvent = {
+      v: 1,
+      type: 'ORDER_ADDED',
+      eventId: randomUUID(),
+      orderId: order.id.toString(),
+      userId: order.userId,
+      market: order.market,
+      side: order.side,
+      orderType: order.type,
+      price: order.price?.toString() ?? null,
+      quantity: order.quantity.toString(),
+      leaveQty: order.leaveQty.toString(),
+      filledQty: order.filledQty.toString(),
+      status: order.status,
+      ts: Date.now(),
+    };
+    await this.outbox.publish(tx, {
+      topic: KAFKA_TOPICS.ORDERS,
+      key: symbol,
+      payload: orderEvt,
+    });
+
+    for (const t of trades) {
+      const tradeEvt: TradeEvent = {
+        v: 1,
+        type: 'TRADE',
+        // Deterministic eventId — re-running the same command produces the
+        // same matchId → same eventId → consumer dedupe still works even
+        // if the relay republishes.
+        eventId: t.matchId ?? randomUUID(),
+        id: t.id.toString(),
+        sequence: Number(t.sequence),
+        market: symbol,
+        price: t.price.toString(),
+        quantity: t.quantity.toString(),
+        makerOrderId: t.makerOrderId.toString(),
+        takerOrderId: t.takerOrderId.toString(),
+        makerUserId: t.makerUserId,
+        takerUserId: t.takerUserId,
+        makerSide: t.makerSide,
+        takerSide: t.takerSide,
+        ts: t.createdAt.getTime(),
+      };
+      await this.outbox.publish(tx, {
+        topic: KAFKA_TOPICS.TRADES,
+        key: symbol,
+        payload: tradeEvt,
+      });
+
+      const takerNotif: UserEvent = {
+        v: 1,
+        eventId: `${t.matchId ?? t.id.toString()}:taker`,
+        userId: t.takerUserId,
+        type: 'ORDER_FILLED',
+        payload: {
+          orderId: t.takerOrderId.toString(),
+          market: symbol,
+          price: t.price.toString(),
+          quantity: t.quantity.toString(),
+        },
+        ts: Date.now(),
+      };
+      await this.outbox.publish(tx, {
+        topic: KAFKA_TOPICS.USER_EVENTS,
+        key: t.takerUserId,
+        payload: takerNotif,
+      });
+
+      const makerNotif: UserEvent = {
+        ...takerNotif,
+        eventId: `${t.matchId ?? t.id.toString()}:maker`,
+        userId: t.makerUserId,
+        payload: { ...takerNotif.payload, orderId: t.makerOrderId.toString() },
+      };
+      await this.outbox.publish(tx, {
+        topic: KAFKA_TOPICS.USER_EVENTS,
+        key: t.makerUserId,
+        payload: makerNotif,
+      });
+    }
+
+    // Post-match orderbook snapshot.
+    const ob = book.getOrderbook();
+    const obEvt: OrderbookEvent = {
+      v: 1,
+      type: 'ORDERBOOK_SNAPSHOT',
+      eventId: randomUUID(),
+      market: symbol,
+      seq: ++orderbookSeq,
+      asks: ob.asks.map((l) => ({ price: l.price, quantity: l.quantity })),
+      bids: ob.bids.map((l) => ({ price: l.price, quantity: l.quantity })),
+      ts: Date.now(),
+    };
+    await this.outbox.publish(tx, {
+      topic: KAFKA_TOPICS.ORDERBOOK,
+      key: symbol,
+      payload: obEvt,
+    });
+  }
+
+  /**
+   * Emit ORDER_CANCELLED + USER_EVENT + ORDERBOOK_SNAPSHOT, all via outbox
+   * inside the cancel transaction.
+   */
+  private async publishCancelEvents(
+    tx: Prisma.TransactionClient,
+    order: Prisma.OrderGetPayload<{}>,
+    book: Orderbook,
+  ) {
+    const orderEvt: OrderEvent = {
+      v: 1,
+      type: 'ORDER_CANCELLED',
+      eventId: randomUUID(),
+      orderId: order.id.toString(),
+      userId: order.userId,
+      market: order.market,
+      side: order.side,
+      orderType: order.type,
+      price: order.price?.toString() ?? null,
+      quantity: order.quantity.toString(),
+      leaveQty: order.leaveQty.toString(),
+      filledQty: order.filledQty.toString(),
+      status: order.status,
+      ts: Date.now(),
+    };
+    await this.outbox.publish(tx, {
+      topic: KAFKA_TOPICS.ORDERS,
+      key: order.market,
+      payload: orderEvt,
+    });
+
+    const userEvt: UserEvent = {
+      v: 1,
+      eventId: randomUUID(),
+      userId: order.userId,
+      type: 'ORDER_CANCELLED',
+      payload: {
+        orderId: order.id.toString(),
+        market: order.market,
+      },
+      ts: Date.now(),
+    };
+    await this.outbox.publish(tx, {
+      topic: KAFKA_TOPICS.USER_EVENTS,
+      key: order.userId,
+      payload: userEvt,
+    });
+
+    const ob = book.getOrderbook();
+    const obEvt: OrderbookEvent = {
+      v: 1,
+      type: 'ORDERBOOK_SNAPSHOT',
+      eventId: randomUUID(),
+      market: order.market,
+      seq: ++orderbookSeq,
+      asks: ob.asks.map((l) => ({ price: l.price, quantity: l.quantity })),
+      bids: ob.bids.map((l) => ({ price: l.price, quantity: l.quantity })),
+      ts: Date.now(),
+    };
+    await this.outbox.publish(tx, {
+      topic: KAFKA_TOPICS.ORDERBOOK,
+      key: order.market,
+      payload: obEvt,
+    });
+  }
+}
+
+/**
+ * Mutable counter passed through the settle pipeline so MARKET sweeps
+ * (multiple settleTrades calls) generate strictly-increasing matchIds.
+ */
+interface MatchIdContext {
+  readonly commandId: string;
+  matchIdx: number;
 }

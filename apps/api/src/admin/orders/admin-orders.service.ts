@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import {
   BadRequestException,
   Injectable,
@@ -11,7 +12,7 @@ import {
 } from '@orbit/shared';
 import { metrics } from '@orbit/observability';
 import { PrismaService } from '../../prisma/prisma.service';
-import { KafkaProducerService } from '../../kafka/kafka-producer.service';
+import { OutboxPublisherService } from '../../kafka/outbox-publisher.service';
 
 const M = metrics.Metrics;
 
@@ -21,7 +22,7 @@ export class AdminOrdersService {
 
   constructor(
     private readonly prisma: PrismaService,
-    private readonly kafka: KafkaProducerService,
+    private readonly outbox: OutboxPublisherService,
   ) {}
 
   async list(opts: {
@@ -89,6 +90,7 @@ export class AdminOrdersService {
     const cmd: OrderCancelCommand = {
       v: 1,
       type: 'CANCEL',
+      commandId: randomUUID(),
       orderId: order.id.toString(),
       userId: order.userId,
       symbol: order.market,
@@ -96,11 +98,16 @@ export class AdminOrdersService {
     };
 
     try {
-      await this.kafka.send<OrderCancelCommand>(
-        KAFKA_TOPICS.ORDER_COMMANDS,
-        order.market,
-        cmd,
-      );
+      // ADR-0002 — admin force-cancel goes through the outbox like any
+      // other mutating producer path. Wrapped in a tiny tx so the
+      // OutboxEvent INSERT is its own atomic unit.
+      await this.prisma.$transaction(async (tx) => {
+        await this.outbox.publish(tx, {
+          topic: KAFKA_TOPICS.ORDER_COMMANDS,
+          key: order.market,
+          payload: cmd,
+        });
+      });
       M.ordersCancelled.inc({ market: order.market, origin: 'admin' });
     } catch (err) {
       this.log.error(`force-cancel publish failed: ${(err as Error).message}`);

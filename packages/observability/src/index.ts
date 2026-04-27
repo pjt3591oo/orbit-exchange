@@ -19,3 +19,4 @@ export * from './nest.js';
 export * from './pino-otel.js';
 export * from './pino-transport.js';
 export * from './kafka-trace.js';
+export * from './dedupe.js';

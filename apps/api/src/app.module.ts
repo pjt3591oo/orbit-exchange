@@ -12,6 +12,7 @@ import { MarketModule } from './market/market.module';
 import { OrderModule } from './order/order.module';
 import { HealthModule } from './health/health.module';
 import { AdminModule } from './admin/admin.module';
+import { IdempotencyModule } from './idempotency/idempotency.module';
 
 /**
  * apps/api is HTTP-only after the matcher/realtime split:
@@ -35,6 +36,7 @@ import { AdminModule } from './admin/admin.module';
     PrismaModule,
     RedisModule,
     KafkaModule,
+    IdempotencyModule,
     AuthModule,
     UserModule,
     WalletModule,

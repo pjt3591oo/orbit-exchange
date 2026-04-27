@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import {
   BadRequestException,
   ForbiddenException,
@@ -8,7 +9,7 @@ import {
 import { Prisma } from '@prisma/client';
 import Decimal from 'decimal.js';
 import { PrismaService } from '../prisma/prisma.service';
-import { KafkaProducerService } from '../kafka/kafka-producer.service';
+import { OutboxPublisherService } from '../kafka/outbox-publisher.service';
 import {
   KAFKA_TOPICS,
   type OrderCancelCommand,
@@ -51,7 +52,7 @@ export class OrderService {
 
   constructor(
     private readonly prisma: PrismaService,
-    private readonly kafka: KafkaProducerService,
+    private readonly outbox: OutboxPublisherService,
   ) {}
 
   async submit(userId: string, dto: CreateOrderDto) {
@@ -96,10 +97,15 @@ export class OrderService {
       throw new BadRequestException('price required for LIMIT');
     }
 
+    // Mint the commandId up-front so it's persisted on the Order row AND
+    // shipped via the SUBMIT command. Matcher uses it to dedupe duplicate
+    // delivery (ADR-0003 §D3) and as the prefix of every Trade.matchId.
+    const commandId = randomUUID();
+
     const order = await this.prisma.$transaction(
       async (tx) => {
         await this.lockReservation(tx, userId, market, dto, quantity, limitPrice);
-        return tx.order.create({
+        const created = await tx.order.create({
           data: {
             userId,
             market: dto.market,
@@ -108,31 +114,37 @@ export class OrderService {
             price: limitPrice ? new Prisma.Decimal(limitPrice.toString()) : null,
             quantity: new Prisma.Decimal(quantity.toString()),
             leaveQty: new Prisma.Decimal(quantity.toString()),
+            commandId,
           },
         });
+
+        // Outbox row in the SAME transaction — atomic with the Order INSERT.
+        // The outbox-relay worker picks it up and publishes to Kafka. If the
+        // process crashes between commit and publish, the row is still in
+        // the table and the relay catches up on next tick (ADR-0002).
+        const cmd: OrderSubmitCommand = {
+          v: 1,
+          type: 'SUBMIT',
+          commandId,
+          orderId: created.id.toString(),
+          userId,
+          symbol: dto.market,
+          side: dto.side,
+          ordType: dto.type,
+          price: limitPrice?.toString() ?? null,
+          quantity: quantity.toString(),
+          ts: Date.now(),
+        };
+        await this.outbox.publish(tx, {
+          topic: KAFKA_TOPICS.ORDER_COMMANDS,
+          key: dto.market,
+          payload: cmd,
+        });
+
+        return created;
       },
       { isolationLevel: 'ReadCommitted', timeout: 10_000 },
     );
-
-    // After-commit publish. Best-effort: matcher will redeliver state via WS
-    // once it processes the command. If kafka is down, the order sits in OPEN
-    // until kafka recovers (matcher re-consumes from offset).
-    // TODO:: kafka 장애 - outbox 패턴으로 전환 고려.
-    const cmd: OrderSubmitCommand = {
-      v: 1,
-      type: 'SUBMIT',
-      orderId: order.id.toString(),
-      userId,
-      symbol: dto.market,
-      side: dto.side,
-      ordType: dto.type,
-      price: limitPrice?.toString() ?? null,
-      quantity: quantity.toString(),
-      ts: Date.now(),
-    };
-    this.kafka
-      .send<OrderSubmitCommand>(KAFKA_TOPICS.ORDER_COMMANDS, dto.market, cmd)
-      .catch((err) => this.log.error(`publish SUBMIT failed: ${(err as Error).message}`));
 
     return this.presentOrder(order);
   }
@@ -144,17 +156,26 @@ export class OrderService {
       throw new BadRequestException('order not active');
     }
 
-    const cmd: OrderCancelCommand = {
-      v: 1,
-      type: 'CANCEL',
-      orderId: order.id.toString(),
-      userId,
-      symbol: order.market,
-      ts: Date.now(),
-    };
-    this.kafka
-      .send<OrderCancelCommand>(KAFKA_TOPICS.ORDER_COMMANDS, order.market, cmd)
-      .catch((err) => this.log.error(`publish CANCEL failed: ${(err as Error).message}`));
+    // CANCEL uses outbox too — same dual-write reasoning as SUBMIT. We don't
+    // need a new transaction since we're not mutating any other row, but a
+    // tiny `$transaction` keeps the publish path uniform.
+    const commandId = randomUUID();
+    await this.prisma.$transaction(async (tx) => {
+      const cmd: OrderCancelCommand = {
+        v: 1,
+        type: 'CANCEL',
+        commandId,
+        orderId: order.id.toString(),
+        userId,
+        symbol: order.market,
+        ts: Date.now(),
+      };
+      await this.outbox.publish(tx, {
+        topic: KAFKA_TOPICS.ORDER_COMMANDS,
+        key: order.market,
+        payload: cmd,
+      });
+    });
 
     M.ordersCancelled.inc({ market: order.market, origin: 'user' });
 
