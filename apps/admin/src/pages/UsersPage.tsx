@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { api } from '../lib/api';
 import { PageHeader, Card } from '../components/PageHeader';
+import { Pagination, useCursorPagination } from '../components/Pagination';
 
 interface UserRow {
   id: string;
@@ -15,11 +16,15 @@ interface UserRow {
 
 export function UsersPage() {
   const [q, setQ] = useState('');
-  const { data, isLoading } = useQuery({
-    queryKey: ['admin-users', q],
+  const { currentCursor, page, pushNext, popPrev, hasPrev } = useCursorPagination([q]);
+  const { data, isLoading, isFetching } = useQuery({
+    queryKey: ['admin-users', q, currentCursor],
     queryFn: async () =>
-      (await api.get<{ items: UserRow[]; nextCursor: string | null }>('/users', { params: { q } }))
-        .data,
+      (
+        await api.get<{ items: UserRow[]; nextCursor: string | null }>('/users', {
+          params: { q, ...(currentCursor && { cursor: currentCursor }) },
+        })
+      ).data,
   });
 
   return (
@@ -108,6 +113,15 @@ export function UsersPage() {
             )}
           </tbody>
         </table>
+        <Pagination
+          page={page}
+          hasPrev={hasPrev}
+          hasNext={!!data?.nextCursor}
+          onPrev={popPrev}
+          onNext={() => pushNext(data?.nextCursor)}
+          loading={isFetching}
+          itemsCount={data?.items.length}
+        />
       </Card>
     </>
   );

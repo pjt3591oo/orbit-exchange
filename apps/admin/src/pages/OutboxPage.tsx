@@ -4,6 +4,7 @@ import { api } from '../lib/api';
 import { hasAnyRole } from '../lib/keycloak';
 import { PageHeader, Card } from '../components/PageHeader';
 import { ConfirmDialog } from '../components/ConfirmDialog';
+import { Pagination, useCursorPagination } from '../components/Pagination';
 
 interface OutboxRow {
   id: string;
@@ -58,12 +59,21 @@ export function OutboxPage() {
     queryFn: async () => (await api.get<OutboxStats>('/outbox/stats')).data,
     refetchInterval: 5_000,
   });
+  const { currentCursor, page, pushNext, popPrev, hasPrev } =
+    useCursorPagination([status, topic]);
+
   const list = useQuery({
-    queryKey: ['admin-outbox', status, topic],
+    queryKey: ['admin-outbox', status, topic, currentCursor],
     queryFn: async () =>
       (await api.get<{ items: OutboxRow[]; nextCursor: string | null }>(
         '/outbox',
-        { params: { status, ...(topic && { topic }) } },
+        {
+          params: {
+            status,
+            ...(topic && { topic }),
+            ...(currentCursor && { cursor: currentCursor }),
+          },
+        },
       )).data,
   });
   const detail = useQuery({
@@ -296,6 +306,15 @@ export function OutboxPage() {
             })}
           </tbody>
         </table>
+        <Pagination
+          page={page}
+          hasPrev={hasPrev}
+          hasNext={!!list.data?.nextCursor}
+          onPrev={popPrev}
+          onNext={() => pushNext(list.data?.nextCursor)}
+          loading={list.isFetching}
+          itemsCount={list.data?.items.length}
+        />
       </Card>
 
       {confirm && confirm.kind === 'retry' && (

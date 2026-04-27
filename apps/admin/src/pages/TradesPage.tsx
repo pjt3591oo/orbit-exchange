@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { PageHeader, Card } from '../components/PageHeader';
+import { Pagination, useCursorPagination } from '../components/Pagination';
 
 interface TradeRow {
   id: string; market: string; price: string; quantity: string;
@@ -13,13 +14,18 @@ interface TradeRow {
 
 export function TradesPage() {
   const [filter, setFilter] = useState({ userId: '', market: '' });
-  const { data, isLoading } = useQuery({
-    queryKey: ['admin-trades', filter],
+  const { currentCursor, page, pushNext, popPrev, hasPrev } = useCursorPagination([
+    filter.userId,
+    filter.market,
+  ]);
+  const { data, isLoading, isFetching } = useQuery({
+    queryKey: ['admin-trades', filter, currentCursor],
     queryFn: async () =>
       (await api.get<{ items: TradeRow[]; nextCursor: string | null }>('/trades', {
         params: {
           ...(filter.userId && { userId: filter.userId }),
           ...(filter.market && { market: filter.market }),
+          ...(currentCursor && { cursor: currentCursor }),
         },
       })).data,
   });
@@ -71,6 +77,15 @@ export function TradesPage() {
             ))}
           </tbody>
         </table>
+        <Pagination
+          page={page}
+          hasPrev={hasPrev}
+          hasNext={!!data?.nextCursor}
+          onPrev={popPrev}
+          onNext={() => pushNext(data?.nextCursor)}
+          loading={isFetching}
+          itemsCount={data?.items.length}
+        />
       </Card>
     </>
   );

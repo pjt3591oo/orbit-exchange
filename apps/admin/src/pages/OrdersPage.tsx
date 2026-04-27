@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { PageHeader, Card } from '../components/PageHeader';
 import { ConfirmDialog } from '../components/ConfirmDialog';
+import { Pagination, useCursorPagination } from '../components/Pagination';
 import { hasRole } from '../lib/keycloak';
 
 interface OrderRow {
@@ -14,14 +15,20 @@ interface OrderRow {
 export function OrdersPage() {
   const [filter, setFilter] = useState({ userId: '', market: '', status: 'OPEN,PARTIAL' });
   const qc = useQueryClient();
-  const { data, isLoading } = useQuery({
-    queryKey: ['admin-orders', filter],
+  const { currentCursor, page, pushNext, popPrev, hasPrev } = useCursorPagination([
+    filter.userId,
+    filter.market,
+    filter.status,
+  ]);
+  const { data, isLoading, isFetching } = useQuery({
+    queryKey: ['admin-orders', filter, currentCursor],
     queryFn: async () =>
       (await api.get<{ items: OrderRow[]; nextCursor: string | null }>('/orders', {
         params: {
           ...(filter.userId && { userId: filter.userId }),
           ...(filter.market && { market: filter.market }),
           ...(filter.status && { status: filter.status }),
+          ...(currentCursor && { cursor: currentCursor }),
         },
       })).data,
   });
@@ -120,6 +127,15 @@ export function OrdersPage() {
             ))}
           </tbody>
         </table>
+        <Pagination
+          page={page}
+          hasPrev={hasPrev}
+          hasNext={!!data?.nextCursor}
+          onPrev={popPrev}
+          onNext={() => pushNext(data?.nextCursor)}
+          loading={isFetching}
+          itemsCount={data?.items.length}
+        />
       </Card>
 
       {cancelTarget && (

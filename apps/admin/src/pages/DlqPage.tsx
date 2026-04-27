@@ -4,6 +4,7 @@ import { api } from '../lib/api';
 import { hasAnyRole } from '../lib/keycloak';
 import { PageHeader, Card } from '../components/PageHeader';
 import { ConfirmDialog } from '../components/ConfirmDialog';
+import { Pagination, useCursorPagination } from '../components/Pagination';
 
 interface DlqRow {
   id: string;
@@ -58,14 +59,19 @@ export function DlqPage() {
   >(null);
 
   const qc = useQueryClient();
+  // Cursor-stack pagination — resets whenever the filter changes.
+  const { currentCursor, page, pushNext, popPrev, hasPrev } =
+    useCursorPagination([status, worker, originalTopic]);
+
   const list = useQuery({
-    queryKey: ['admin-dlq', status, worker, originalTopic],
+    queryKey: ['admin-dlq', status, worker, originalTopic, currentCursor],
     queryFn: async () =>
       (await api.get<{ items: DlqRow[]; nextCursor: string | null }>('/dlq', {
         params: {
           status,
           ...(worker && { worker }),
           ...(originalTopic && { originalTopic }),
+          ...(currentCursor && { cursor: currentCursor }),
         },
       })).data,
   });
@@ -242,6 +248,15 @@ export function DlqPage() {
             ))}
           </tbody>
         </table>
+        <Pagination
+          page={page}
+          hasPrev={hasPrev}
+          hasNext={!!list.data?.nextCursor}
+          onPrev={popPrev}
+          onNext={() => pushNext(list.data?.nextCursor)}
+          loading={list.isFetching}
+          itemsCount={list.data?.items.length}
+        />
       </Card>
 
       {confirm && (

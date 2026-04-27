@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { PageHeader, Card } from '../components/PageHeader';
+import { Pagination, useCursorPagination } from '../components/Pagination';
 
 interface AuditRow {
   id: string;
@@ -20,11 +21,20 @@ interface AuditRow {
 
 export function AuditPage() {
   const [filter, setFilter] = useState({ actor: '', action: '', targetType: '', targetId: '' });
-  const { data, isLoading } = useQuery({
-    queryKey: ['admin-audit', filter],
+  const { currentCursor, page, pushNext, popPrev, hasPrev } = useCursorPagination([
+    filter.actor,
+    filter.action,
+    filter.targetType,
+    filter.targetId,
+  ]);
+  const { data, isLoading, isFetching } = useQuery({
+    queryKey: ['admin-audit', filter, currentCursor],
     queryFn: async () =>
       (await api.get<{ items: AuditRow[]; nextCursor: string | null }>('/audit', {
-        params: Object.fromEntries(Object.entries(filter).filter(([_, v]) => v)),
+        params: {
+          ...Object.fromEntries(Object.entries(filter).filter(([_, v]) => v)),
+          ...(currentCursor && { cursor: currentCursor }),
+        },
       })).data,
   });
 
@@ -125,6 +135,15 @@ export function AuditPage() {
             ))}
           </tbody>
         </table>
+        <Pagination
+          page={page}
+          hasPrev={hasPrev}
+          hasNext={!!data?.nextCursor}
+          onPrev={popPrev}
+          onNext={() => pushNext(data?.nextCursor)}
+          loading={isFetching}
+          itemsCount={data?.items.length}
+        />
       </Card>
     </>
   );
