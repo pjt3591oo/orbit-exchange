@@ -22,6 +22,40 @@ import { HealthModule } from './health/health.module';
       pinoHttp: {
         mixin: pinoOtelMixin,
         transport: pinoTransport('orbit-realtime'),
+        // Same minimal serializer / probe-skip / level-by-status policy as
+        // apps/api — see app.module there for rationale.
+        serializers: {
+          req: (req: { id?: unknown; method: string; url: string }) => ({
+            id: req.id,
+            method: req.method,
+            url: req.url,
+          }),
+          res: (res: { statusCode: number }) => ({ statusCode: res.statusCode }),
+        },
+        autoLogging: {
+          ignore: (req: { url?: string }) => {
+            const url = req.url ?? '';
+            return (
+              url.startsWith('/health') ||
+              url.startsWith('/ready') ||
+              url.startsWith('/metrics') ||
+              // Socket.IO upgrade handshake noise — the actual WS frames
+              // don't go through pino-http anyway, but the polling
+              // fallback hits /socket.io/?EIO=4&transport=polling once
+              // every few seconds per client.
+              url.startsWith('/socket.io')
+            );
+          },
+        },
+        customLogLevel: (
+          _req: unknown,
+          res: { statusCode: number },
+          err: unknown,
+        ) => {
+          if (err || res.statusCode >= 500) return 'error';
+          if (res.statusCode >= 400) return 'warn';
+          return 'info';
+        },
       },
     }),
     RedisModule,

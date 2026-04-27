@@ -30,7 +30,43 @@ import { IdempotencyModule } from './idempotency/idempotency.module';
         // line — Loki's derived field then renders a "View trace" link.
         mixin: pinoOtelMixin,
         transport: pinoTransport('orbit-api'),
-        redact: ['req.headers.authorization', 'req.headers.cookie'],
+        // Default pino-http serializers dump ALL request and response
+        // headers per line — a single GET produces ~600 chars (CSP,
+        // sec-fetch-*, accept-language, helmet headers …). Replace with a
+        // minimum that's actually useful when grep'ing dev logs. Header-
+        // level inspection still possible via Tempo span attributes.
+        serializers: {
+          req: (req: { id?: unknown; method: string; url: string }) => ({
+            id: req.id,
+            method: req.method,
+            url: req.url,
+          }),
+          res: (res: { statusCode: number }) => ({ statusCode: res.statusCode }),
+        },
+        // Probe endpoints get hit every ~5–15s by Prometheus / k8s. Their
+        // access logs are pure noise.
+        autoLogging: {
+          ignore: (req: { url?: string }) => {
+            const url = req.url ?? '';
+            return (
+              url.startsWith('/health') ||
+              url.startsWith('/ready') ||
+              url.startsWith('/metrics')
+            );
+          },
+        },
+        // 5xx → error, 4xx → warn, everything else → info. Lets `LOG_LEVEL=warn`
+        // in production silently drop the happy-path access spam while still
+        // surfacing real problems.
+        customLogLevel: (
+          _req: unknown,
+          res: { statusCode: number },
+          err: unknown,
+        ) => {
+          if (err || res.statusCode >= 500) return 'error';
+          if (res.statusCode >= 400) return 'warn';
+          return 'info';
+        },
       },
     }),
     PrismaModule,
