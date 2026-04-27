@@ -1,0 +1,63 @@
+{
+  "name": "@orbit/observability",
+  "version": "0.1.0",
+  "private": true,
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./tracing": {
+      "types": "./dist/tracing.d.ts",
+      "default": "./dist/tracing.js"
+    },
+    "./metrics": {
+      "types": "./dist/metrics.d.ts",
+      "default": "./dist/metrics.js"
+    },
+    "./pino-otel": {
+      "types": "./dist/pino-otel.d.ts",
+      "default": "./dist/pino-otel.js"
+    },
+    "./pino-transport": {
+      "types": "./dist/pino-transport.d.ts",
+      "default": "./dist/pino-transport.js"
+    },
+    "./nest": {
+      "types": "./dist/nest.d.ts",
+      "default": "./dist/nest.js"
+    },
+    "./kafka-trace": {
+      "types": "./dist/kafka-trace.d.ts",
+      "default": "./dist/kafka-trace.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsc -p tsconfig.json --watch --preserveWatchOutput",
+    "lint": "echo '(observability) no lint yet'"
+  },
+  "dependencies": {
+    "@opentelemetry/api": "^1.9.0",
+    "@opentelemetry/auto-instrumentations-node": "^0.53.0",
+    "@opentelemetry/exporter-trace-otlp-grpc": "^0.55.0",
+    "@opentelemetry/instrumentation": "^0.55.0",
+    "@opentelemetry/resources": "^1.28.0",
+    "@opentelemetry/sdk-node": "^0.55.0",
+    "@opentelemetry/sdk-trace-base": "^1.28.0",
+    "@opentelemetry/semantic-conventions": "^1.28.0",
+    "pino-loki": "^2.3.1",
+    "prom-client": "^15.1.3"
+  },
+  "peerDependencies": {
+    "kafkajs": "*",
+    "pino": "*"
+  },
+  "devDependencies": {
+    "kafkajs": "^2.2.4",
+    "pino": "^9.5.0",
+    "typescript": "^5.6.3"
+  }
+}

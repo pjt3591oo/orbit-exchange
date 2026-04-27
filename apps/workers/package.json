@@ -12,6 +12,7 @@
   "dependencies": {
     "@aws-sdk/client-s3": "^3.670.0",
     "@aws-sdk/client-sns": "^3.670.0",
+    "@orbit/observability": "workspace:*",
     "@orbit/shared": "workspace:*",
     "@prisma/client": "^5.22.0",
     "decimal.js": "^10.4.3",

@@ -132,7 +132,117 @@ services:
       retries: 30
       start_period: 60s
 
+  # ─────────── Observability (LGTM stack) ───────────
+  # User-facing services (api/matcher/realtime/workers) push:
+  #   - metrics  → Prometheus pulls /metrics every 15s
+  #   - logs     → Promtail tails docker logs and ships to Loki
+  #   - traces   → OTel SDK in each app exports OTLP/gRPC to Tempo
+
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    container_name: orbit-prometheus
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=7d
+      - --web.enable-lifecycle
+      # Receive remote-write from Tempo's metrics_generator (span metrics).
+      - --web.enable-remote-write-receiver
+      # Allow OTLP→Prometheus exemplars (for trace-id deep links).
+      - --enable-feature=exemplar-storage,native-histograms
+    volumes:
+      - ./infra/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    ports:
+      - "9090:9090"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:9090/-/ready"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+
+  loki:
+    image: grafana/loki:3.2.1
+    container_name: orbit-loki
+    command: -config.file=/etc/loki/local-config.yaml
+    volumes:
+      - ./infra/loki/loki-config.yml:/etc/loki/local-config.yaml:ro
+      - loki_data:/loki
+    ports:
+      - "3100:3100"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3100/ready"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+
+  tempo:
+    image: grafana/tempo:2.6.1
+    container_name: orbit-tempo
+    command: ["-config.file=/etc/tempo.yaml"]
+    volumes:
+      - ./infra/tempo/tempo.yml:/etc/tempo.yaml:ro
+      - tempo_data:/var/tempo
+    ports:
+      - "3200:3200"   # tempo HTTP query API
+      - "4317:4317"   # OTLP gRPC receiver
+      - "4318:4318"   # OTLP HTTP receiver
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3200/ready"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+
+  # promtail 은 앱이 컨테이너화 되었을 때 활성화. 지금은 apps 가 호스트에서
+  # pnpm dev 로 돌아가서, 각 앱이 pino-loki transport 로 Loki HTTP /push 에
+  # 직접 보냅니다. 컨테이너화 시 아래 주석 해제 + infra/promtail/config 사용.
+  #
+  # promtail:
+  #   image: grafana/promtail:3.2.1
+  #   container_name: orbit-promtail
+  #   command: -config.file=/etc/promtail/config.yml
+  #   volumes:
+  #     - ./infra/promtail/promtail-config.yml:/etc/promtail/config.yml:ro
+  #     - /var/run/docker.sock:/var/run/docker.sock
+  #     - /var/lib/docker/containers:/var/lib/docker/containers:ro
+  #   depends_on:
+  #     loki:
+  #       condition: service_healthy
+
+  grafana:
+    image: grafana/grafana:11.3.1
+    container_name: orbit-grafana
+    environment:
+      # Local-dev convenience: anonymous Admin so no login screen.
+      # In prod, replace with real auth (Keycloak OIDC / SSO).
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: "Admin"
+      GF_AUTH_DISABLE_LOGIN_FORM: "true"
+      GF_USERS_DEFAULT_THEME: "dark"
+      GF_FEATURE_TOGGLES_ENABLE: "traceqlEditor"
+    volumes:
+      - ./infra/grafana/datasources:/etc/grafana/provisioning/datasources:ro
+      - ./infra/grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    ports:
+      - "3030:3000"   # 3000 is taken by apps/api
+    depends_on:
+      prometheus:
+        condition: service_healthy
+      loki:
+        condition: service_healthy
+      tempo:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3000/api/health | grep -q ok"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+
 volumes:
   postgres_data:
   localstack_data:
   redpanda_data:
+  prometheus_data:
+  loki_data:
+  tempo_data:
+  grafana_data:

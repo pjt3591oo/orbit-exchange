@@ -1,10 +1,12 @@
 import { PublishCommand } from '@aws-sdk/client-sns';
 import { CONSUMER_GROUPS, KAFKA_TOPICS, type UserEvent } from '@orbit/shared';
+import { withKafkaContext } from '@orbit/observability';
 import { getKafka } from '../lib/kafka';
 import { sns } from '../lib/aws';
 import { childLogger } from '../lib/logger';
 
 const log = childLogger('notification');
+const WORKER = 'notification';
 
 /**
  * Consumes user-events Kafka topic and fans them out to AWS SNS.
@@ -22,7 +24,8 @@ export async function runNotification() {
   await consumer.subscribe({ topic: KAFKA_TOPICS.USER_EVENTS, fromBeginning: false });
 
   await consumer.run({
-    eachMessage: async ({ message }) => {
+    eachMessage: ({ topic, partition, message }) =>
+      withKafkaContext({ worker: WORKER, topic, partition, message }, async () => {
       if (!message.value) return;
       const evt = JSON.parse(message.value.toString()) as UserEvent;
 
@@ -44,8 +47,9 @@ export async function runNotification() {
         );
       } catch (err) {
         log.error({ err }, 'SNS publish failed');
+        throw err;
       }
-    },
+      }),
   });
 
   log.info('notification worker running');

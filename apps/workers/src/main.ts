@@ -1,3 +1,8 @@
+// IMPORTANT: tracing first.
+import { tracing, metrics, startOpsServer } from '@orbit/observability';
+tracing.startTracing('orbit-workers');
+metrics.bindMetrics('orbit-workers');
+
 import { runCandleAggregator } from './candle-aggregator';
 import { runMarketDataFanout } from './market-data-fanout';
 import { runNotification } from './notification';
@@ -7,6 +12,15 @@ import { logger } from './lib/logger';
 async function main() {
   const enabled = (process.env.WORKERS ?? 'candle,fanout,notification,audit').split(',').map((s) => s.trim());
   logger.info({ enabled }, 'starting workers');
+
+  const opsPort = Number(process.env.WORKERS_OPS_PORT ?? 3003);
+  const ops = startOpsServer({
+    port: opsPort,
+    health: () => ({ workers: enabled }),
+  });
+  process.once('SIGTERM', () => ops.close());
+  process.once('SIGINT', () => ops.close());
+
   const tasks: Array<Promise<void>> = [];
   if (enabled.includes('candle')) tasks.push(runCandleAggregator());
   if (enabled.includes('fanout')) tasks.push(runMarketDataFanout());

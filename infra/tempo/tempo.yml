@@ -1,0 +1,51 @@
+# ORBIT Tempo — single-binary local dev. Receives OTLP from each ORBIT app
+# and serves traces back to Grafana.
+
+server:
+  http_listen_port: 3200
+  log_level: warn
+
+distributor:
+  receivers:
+    otlp:
+      protocols:
+        grpc:
+          endpoint: 0.0.0.0:4317
+        http:
+          endpoint: 0.0.0.0:4318
+
+ingester:
+  trace_idle_period: 10s
+  max_block_duration: 5m
+
+compactor:
+  compaction:
+    block_retention: 168h            # 7 days
+
+# Generate a few RED metrics from spans automatically — span_metrics_total etc.
+# Saves us from instrumenting HTTP RED metrics manually.
+metrics_generator:
+  registry:
+    external_labels:
+      source: tempo
+      cluster: orbit-local
+  storage:
+    path: /var/tempo/generator/wal
+    remote_write:
+      - url: http://prometheus:9090/api/v1/write
+        send_exemplars: true
+  traces_storage:
+    path: /var/tempo/generator/traces
+
+storage:
+  trace:
+    backend: local
+    wal:
+      path: /var/tempo/wal
+    local:
+      path: /var/tempo/blocks
+
+overrides:
+  defaults:
+    metrics_generator:
+      processors: [service-graphs, span-metrics]

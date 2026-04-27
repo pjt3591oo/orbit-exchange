@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { LoggerModule } from 'nestjs-pino';
+import { pinoOtelMixin, pinoTransport } from '@orbit/observability';
 import { PrismaModule } from './prisma/prisma.module';
 import { RedisModule } from './redis/redis.module';
 import { KafkaModule } from './kafka/kafka.module';
@@ -24,10 +25,10 @@ import { AdminModule } from './admin/admin.module';
     ConfigModule.forRoot({ isGlobal: true }),
     LoggerModule.forRoot({
       pinoHttp: {
-        transport:
-          process.env.NODE_ENV !== 'production'
-            ? { target: 'pino-pretty', options: { singleLine: true } }
-            : undefined,
+        // Inject trace_id / span_id from active OTel context into every log
+        // line — Loki's derived field then renders a "View trace" link.
+        mixin: pinoOtelMixin,
+        transport: pinoTransport('orbit-api'),
         redact: ['req.headers.authorization', 'req.headers.cookie'],
       },
     }),

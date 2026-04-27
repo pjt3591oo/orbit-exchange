@@ -15,6 +15,7 @@
     "@nestjs/platform-express": "^10.4.6",
     "@nestjs/platform-socket.io": "^10.4.6",
     "@nestjs/websockets": "^10.4.6",
+    "@orbit/observability": "workspace:*",
     "@orbit/shared": "workspace:*",
     "ioredis": "^5.4.1",
     "nestjs-pino": "^4.1.0",

@@ -1,0 +1,71 @@
+# ORBIT Promtail — tails Docker container stdout (JSON-file driver) and ships
+# to Loki. Adds labels per container; drops infra noise.
+
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+  log_level: warn
+
+positions:
+  filename: /tmp/positions.yaml
+
+clients:
+  - url: http://loki:3100/loki/api/v1/push
+
+scrape_configs:
+  # Static positions for all docker containers via the Docker SD plugin.
+  - job_name: docker
+    docker_sd_configs:
+      - host: unix:///var/run/docker.sock
+        refresh_interval: 5s
+    relabel_configs:
+      # Friendly `service` label from container name (strip the "orbit-" prefix).
+      - source_labels: ['__meta_docker_container_name']
+        regex: '/orbit-(.*)'
+        target_label: 'service'
+      # Drop logs from infra components — we only want USER-SERVICE logs.
+      # Apps run on the host (not in docker), so promtail will only see infra
+      # containers here. The user-service logs come via the host pino → file
+      # tail below.
+      - source_labels: ['service']
+        regex: '(prometheus|loki|tempo|grafana|promtail|redpanda-console)'
+        action: drop
+
+  # ───── ORBIT user-service logs (host-side) ─────
+  # Apps run via `pnpm dev` on the host, not inside docker, so we tail the
+  # combined dev log file that pnpm dev writes.
+  #
+  # Production wiring: each ECS task has the awslogs driver writing to
+  # CloudWatch, with a sidecar shipping to Loki — promtail config there
+  # would use `loki.source.cloudwatch` / `loki.source.kafka` instead.
+  - job_name: orbit-apps
+    static_configs:
+      - targets: ['localhost']
+        labels:
+          job: orbit-apps
+          source: pnpm-dev
+          __path__: /var/log/orbit/*.log
+    pipeline_stages:
+      # Each line begins with `apps/<svc> dev: <pino-json>` — extract.
+      - regex:
+          expression: '^apps/(?P<service>[a-z]+) dev:\s+(?P<msg>.*)$'
+      - labels:
+          service:
+      - output:
+          source: msg
+      # Then parse the inner pino JSON (best-effort).
+      - json:
+          expressions:
+            level: level
+            time: time
+            request_id: req_id
+            trace_id: trace_id
+            span_id: span_id
+          drop_malformed: false
+      - labels:
+          level:
+      # Use pino's `time` (ms epoch) as the log timestamp.
+      - timestamp:
+          source: time
+          format: UnixMs
+          fallback_formats: [RFC3339Nano]

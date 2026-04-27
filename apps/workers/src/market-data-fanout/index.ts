@@ -1,9 +1,12 @@
 import Redis from 'ioredis';
 import { CONSUMER_GROUPS, KAFKA_TOPICS, type TradeEvent, type OrderbookEvent } from '@orbit/shared';
+import { metrics, withKafkaContext } from '@orbit/observability';
 import { getKafka } from '../lib/kafka';
 import { childLogger } from '../lib/logger';
 
 const log = childLogger('market-data-fanout');
+const M = metrics.Metrics;
+const WORKER = 'market-data-fanout';
 
 /**
  * Consumes trade + orderbook Kafka topics and re-broadcasts into Redis
@@ -20,29 +23,40 @@ export async function runMarketDataFanout() {
   await consumer.subscribe({ topic: KAFKA_TOPICS.ORDERBOOK, fromBeginning: false });
 
   await consumer.run({
-    eachMessage: async ({ topic, message }) => {
+    eachMessage: ({ topic, partition, message }) =>
+      withKafkaContext({ worker: WORKER, topic, partition, message }, async () => {
       if (!message.value) return;
-      const evt = JSON.parse(message.value.toString());
-      if (topic === KAFKA_TOPICS.TRADES) {
-        const t = evt as TradeEvent;
-        await redis.publish(
-          `md:${t.market}:trade`,
-          JSON.stringify({
-            kind: 'trade',
-            data: { id: t.id, market: t.market, price: t.price, quantity: t.quantity, takerSide: t.takerSide, ts: t.ts },
-          }),
-        );
-      } else if (topic === KAFKA_TOPICS.ORDERBOOK) {
-        const ob = evt as OrderbookEvent;
-        await redis.publish(
-          `md:${ob.market}:orderbook`,
-          JSON.stringify({
-            kind: 'orderbook',
-            data: { symbol: ob.market, asks: ob.asks, bids: ob.bids, ts: ob.ts },
-          }),
-        );
+      const t0 = Date.now();
+      try {
+        const evt = JSON.parse(message.value.toString());
+        if (topic === KAFKA_TOPICS.TRADES) {
+          const t = evt as TradeEvent;
+          await redis.publish(
+            `md:${t.market}:trade`,
+            JSON.stringify({
+              kind: 'trade',
+              data: { id: t.id, market: t.market, price: t.price, quantity: t.quantity, takerSide: t.takerSide, ts: t.ts },
+            }),
+          );
+        } else if (topic === KAFKA_TOPICS.ORDERBOOK) {
+          const ob = evt as OrderbookEvent;
+          await redis.publish(
+            `md:${ob.market}:orderbook`,
+            JSON.stringify({
+              kind: 'orderbook',
+              data: { symbol: ob.market, asks: ob.asks, bids: ob.bids, ts: ob.ts },
+            }),
+          );
+        }
+        M.workerMessagesProcessed.inc({ worker: WORKER, topic, result: 'ok' });
+      } catch (err) {
+        M.workerMessagesProcessed.inc({ worker: WORKER, topic, result: 'error' });
+        log.error({ err, topic }, 'fanout handler failed');
+        throw err;
+      } finally {
+        M.workerHandlerDuration.observe({ worker: WORKER }, Date.now() - t0);
       }
-    },
+      }),
   });
 
   log.info('market-data-fanout running');

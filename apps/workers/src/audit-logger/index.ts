@@ -1,10 +1,12 @@
 import { PutObjectCommand } from '@aws-sdk/client-s3';
 import { CONSUMER_GROUPS, KAFKA_TOPICS } from '@orbit/shared';
+import { withKafkaContext } from '@orbit/observability';
 import { getKafka } from '../lib/kafka';
 import { s3 } from '../lib/aws';
 import { childLogger } from '../lib/logger';
 
 const log = childLogger('audit-logger');
+const WORKER = 'audit-logger';
 
 /**
  * Collects every v1 event topic and writes 5-minute JSONL batches to S3
@@ -56,7 +58,8 @@ export async function runAuditLogger() {
   }, FLUSH_MS).unref();
 
   await consumer.run({
-    eachMessage: async ({ topic, message }) => {
+    eachMessage: ({ topic, partition, message }) =>
+      withKafkaContext({ worker: WORKER, topic, partition, message }, async () => {
       if (!message.value) return;
       let batch = batches.get(topic);
       if (!batch) {
@@ -65,7 +68,7 @@ export async function runAuditLogger() {
       }
       batch.lines.push(message.value.toString());
       if (batch.lines.length >= 1000) await flushBatch(topic);
-    },
+      }),
   });
 
   log.info('audit-logger running');

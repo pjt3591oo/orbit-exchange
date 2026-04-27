@@ -9,8 +9,11 @@ import {
   KAFKA_TOPICS,
   type OrderCancelCommand,
 } from '@orbit/shared';
+import { metrics } from '@orbit/observability';
 import { PrismaService } from '../../prisma/prisma.service';
 import { KafkaProducerService } from '../../kafka/kafka-producer.service';
+
+const M = metrics.Metrics;
 
 @Injectable()
 export class AdminOrdersService {
@@ -98,6 +101,7 @@ export class AdminOrdersService {
         order.market,
         cmd,
       );
+      M.ordersCancelled.inc({ market: order.market, origin: 'admin' });
     } catch (err) {
       this.log.error(`force-cancel publish failed: ${(err as Error).message}`);
       throw err;

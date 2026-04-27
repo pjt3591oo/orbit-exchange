@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { LoggerModule } from 'nestjs-pino';
+import { pinoOtelMixin, pinoTransport } from '@orbit/observability';
 import { RedisModule } from './redis/redis.module';
 import { MarketDataModule } from './market-data/market-data.module';
 import { HealthModule } from './health/health.module';
@@ -19,10 +20,8 @@ import { HealthModule } from './health/health.module';
     ConfigModule.forRoot({ isGlobal: true }),
     LoggerModule.forRoot({
       pinoHttp: {
-        transport:
-          process.env.NODE_ENV !== 'production'
-            ? { target: 'pino-pretty', options: { singleLine: true } }
-            : undefined,
+        mixin: pinoOtelMixin,
+        transport: pinoTransport('orbit-realtime'),
       },
     }),
     RedisModule,

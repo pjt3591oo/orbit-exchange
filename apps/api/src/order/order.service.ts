@@ -14,7 +14,10 @@ import {
   type OrderCancelCommand,
   type OrderSubmitCommand,
 } from '@orbit/shared';
+import { metrics } from '@orbit/observability';
 import type { CreateOrderDto } from './dto';
+
+const M = metrics.Metrics;
 
 /**
  * HTTP-side order service. After the matcher was extracted, this service is
@@ -52,6 +55,26 @@ export class OrderService {
   ) {}
 
   async submit(userId: string, dto: CreateOrderDto) {
+    const t0 = Date.now();
+    const labels = { market: dto.market, side: dto.side, type: dto.type };
+    try {
+      const result = await this._submitInner(userId, dto);
+      M.ordersSubmitted.inc({ ...labels, result: 'ok' });
+      return result;
+    } catch (err) {
+      // 4xx (BadRequest / NotFound / Forbidden) vs 5xx (anything else)
+      const code = (err as { status?: number }).status ?? 500;
+      M.ordersSubmitted.inc({ ...labels, result: code >= 500 ? '5xx' : '4xx' });
+      if (err instanceof ForbiddenException && err.message.includes('frozen')) {
+        M.frozenBlocks.inc();
+      }
+      throw err;
+    } finally {
+      M.orderSubmitDuration.observe({ market: dto.market }, Date.now() - t0);
+    }
+  }
+
+  private async _submitInner(userId: string, dto: CreateOrderDto) {
     // Block submissions from frozen users (set by an admin via WALLET_ADJUST).
     // We only check status here, not balance — that comes in lockReservation.
     const user = await this.prisma.user.findUnique({
@@ -132,6 +155,8 @@ export class OrderService {
     this.kafka
       .send<OrderCancelCommand>(KAFKA_TOPICS.ORDER_COMMANDS, order.market, cmd)
       .catch((err) => this.log.error(`publish CANCEL failed: ${(err as Error).message}`));
+
+    M.ordersCancelled.inc({ market: order.market, origin: 'user' });
 
     // Return the current row — the WS feed will surface the CANCELLED state
     // once the matcher applies the command.

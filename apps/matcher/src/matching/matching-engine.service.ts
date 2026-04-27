@@ -1,7 +1,10 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { Orderbook, TRADE_SIDE } from 'orderbook-match-engine';
 import PQueue from 'p-queue';
+import { metrics } from '@orbit/observability';
 import { PrismaService } from '../prisma/prisma.service';
+
+const M = metrics.Metrics;
 
 type MarketSymbol = string;
 
@@ -40,8 +43,14 @@ export class MatchingEngineService implements OnModuleInit {
 
   /** Serialize a task against this market's write lane. */
   async run<T>(symbol: string, task: () => Promise<T>): Promise<T> {
-    const result = await this.getQueue(symbol).add(task);
-    return result as T;
+    const q = this.getQueue(symbol);
+    M.matcherQueueDepth.set({ symbol }, q.size + q.pending);
+    try {
+      const result = await q.add(task);
+      return result as T;
+    } finally {
+      M.matcherQueueDepth.set({ symbol }, q.size + q.pending);
+    }
   }
 
   sideToEngine(side: 'BID' | 'ASK'): TRADE_SIDE {

@@ -1,0 +1,16 @@
+apiVersion: 1
+
+providers:
+  - name: 'orbit'
+    orgId: 1
+    folder: 'ORBIT'
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    allowUiUpdates: true
+    options:
+      path: /etc/grafana/provisioning/dashboards
+      # `false` → all JSON files land in the `folder` above (ORBIT).
+      # Switch to `true` if you start using sub-directories to bucket
+      # dashboards into multiple folders.
+      foldersFromFilesStructure: false

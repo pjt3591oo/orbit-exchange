@@ -1,0 +1,188 @@
+{
+  "uid": "orbit-service-map",
+  "title": "ORBIT — Service Map (Tempo)",
+  "tags": ["orbit", "tempo", "tracing"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "refresh": "10s",
+  "time": { "from": "now-30m", "to": "now" },
+  "panels": [
+    {
+      "id": 1,
+      "type": "nodeGraph",
+      "title": "Service Map (auto-derived from trace spans)",
+      "description": "Tempo metrics_generator emits `traces_service_graph_request_*` from parent-child span relationships. Edges = inter-service calls (HTTP, Kafka, Redis). The Tempo datasource's serviceMap query type renders this directly as a NodeGraph.",
+      "gridPos": { "x": 0, "y": 0, "w": 24, "h": 14 },
+      "targets": [
+        {
+          "datasource": { "type": "tempo", "uid": "tempo" },
+          "queryType": "serviceMap",
+          "serviceMapQuery": "{}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "type": "row",
+      "title": "Inter-service traffic (RED metrics from spans)",
+      "gridPos": { "x": 0, "y": 14, "w": 24, "h": 1 }
+    },
+    {
+      "id": 11,
+      "type": "timeseries",
+      "title": "Edge request rate — calls/s",
+      "description": "Calls per edge (client → server). connection_type ∈ {messaging_system (Kafka), virtual_node (HTTP / DB / cache)}.",
+      "gridPos": { "x": 0, "y": 15, "w": 12, "h": 8 },
+      "fieldConfig": { "defaults": { "unit": "ops" } },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum by (client, server) (rate(traces_service_graph_request_total[1m]))",
+          "legendFormat": "{{client}} → {{server}}"
+        }
+      ]
+    },
+    {
+      "id": 12,
+      "type": "timeseries",
+      "title": "Edge latency — server p95 (s)",
+      "description": "Time spent in `server` while handling a call from `client`. Spike here = receiver is slow.",
+      "gridPos": { "x": 12, "y": 15, "w": 12, "h": 8 },
+      "fieldConfig": { "defaults": { "unit": "s" } },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "histogram_quantile(0.95, sum by (le, client, server) (rate(traces_service_graph_request_server_seconds_bucket[1m])))",
+          "legendFormat": "{{client}} → {{server}}"
+        }
+      ]
+    },
+    {
+      "id": 13,
+      "type": "timeseries",
+      "title": "Edge latency — client p95 (s)",
+      "description": "Wall-clock time the `client` waited for `server`. Includes network + queueing + server processing. Higher than server p95 = network or queueing pressure.",
+      "gridPos": { "x": 0, "y": 23, "w": 12, "h": 8 },
+      "fieldConfig": { "defaults": { "unit": "s" } },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "histogram_quantile(0.95, sum by (le, client, server) (rate(traces_service_graph_request_client_seconds_bucket[1m])))",
+          "legendFormat": "{{client}} → {{server}}"
+        }
+      ]
+    },
+    {
+      "id": 14,
+      "type": "table",
+      "title": "Edges — current call totals (last 15m)",
+      "description": "Static snapshot — useful for spotting low-volume edges that wouldn't show on the timeseries.",
+      "gridPos": { "x": 12, "y": 23, "w": 12, "h": 8 },
+      "fieldConfig": {
+        "defaults": { "unit": "short", "custom": { "align": "left" } },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "Value" }, "properties": [{ "id": "displayName", "value": "calls (15m)" }, { "id": "custom.align", "value": "right" }] }
+        ]
+      },
+      "options": {
+        "showHeader": true
+      },
+      "transformations": [
+        { "id": "labelsToFields", "options": { "valueLabel": null, "mode": "columns" } },
+        { "id": "organize", "options": { "excludeByName": { "Time": true, "__metrics_gen_instance": true, "cluster": true, "source": true } } }
+      ],
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum by (client, server, connection_type) (increase(traces_service_graph_request_total[15m]))",
+          "instant": true,
+          "format": "table"
+        }
+      ]
+    },
+
+    {
+      "id": 20,
+      "type": "row",
+      "title": "Per-service spanmetrics (RED)",
+      "gridPos": { "x": 0, "y": 31, "w": 24, "h": 1 }
+    },
+    {
+      "id": 21,
+      "type": "timeseries",
+      "title": "Span rate by service — calls/s",
+      "description": "Total span rate per service (across all span_kinds). Captures HTTP requests, Kafka publishes, DB queries, internal spans.",
+      "gridPos": { "x": 0, "y": 32, "w": 12, "h": 8 },
+      "fieldConfig": { "defaults": { "unit": "ops" } },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum by (service) (rate(traces_spanmetrics_calls_total{service=~\"orbit-.*\"}[1m]))",
+          "legendFormat": "{{service}}"
+        }
+      ]
+    },
+    {
+      "id": 22,
+      "type": "timeseries",
+      "title": "Span latency p95 by service (s)",
+      "gridPos": { "x": 12, "y": 32, "w": 12, "h": 8 },
+      "fieldConfig": { "defaults": { "unit": "s" } },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "histogram_quantile(0.95, sum by (le, service) (rate(traces_spanmetrics_latency_bucket{service=~\"orbit-.*\"}[1m])))",
+          "legendFormat": "{{service}}"
+        }
+      ]
+    },
+    {
+      "id": 23,
+      "type": "timeseries",
+      "title": "Span error rate — STATUS_CODE_ERROR /s by service",
+      "description": "OTel SemConv: status_code=STATUS_CODE_ERROR means the span failed (HTTP 5xx, exception thrown, etc.). UNSET = no error.",
+      "gridPos": { "x": 0, "y": 40, "w": 12, "h": 8 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "color": { "mode": "fixed", "fixedColor": "red" }
+        }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum by (service) (rate(traces_spanmetrics_calls_total{service=~\"orbit-.*\", status_code=\"STATUS_CODE_ERROR\"}[1m])) or vector(0)",
+          "legendFormat": "{{service}}"
+        }
+      ]
+    },
+    {
+      "id": 24,
+      "type": "table",
+      "title": "Top 10 spans by call rate (5m)",
+      "description": "Shows which routes / Kafka topics / DB queries dominate. Useful for spotting hot paths.",
+      "gridPos": { "x": 12, "y": 40, "w": 12, "h": 8 },
+      "fieldConfig": {
+        "defaults": { "unit": "ops", "custom": { "align": "left" } },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "Value" }, "properties": [{ "id": "displayName", "value": "calls/s" }, { "id": "custom.align", "value": "right" }, { "id": "decimals", "value": 2 }] }
+        ]
+      },
+      "options": { "showHeader": true },
+      "transformations": [
+        { "id": "labelsToFields", "options": { "mode": "columns" } },
+        { "id": "organize", "options": { "excludeByName": { "Time": true, "__metrics_gen_instance": true, "cluster": true, "source": true, "status_code": true } } },
+        { "id": "sortBy", "options": { "fields": {}, "sort": [{ "field": "Value", "desc": true }] } }
+      ],
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "topk(10, sum by (service, span_name, span_kind) (rate(traces_spanmetrics_calls_total{service=~\"orbit-.*\"}[5m])))",
+          "instant": true,
+          "format": "table"
+        }
+      ]
+    }
+  ]
+}

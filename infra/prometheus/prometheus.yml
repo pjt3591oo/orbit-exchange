@@ -1,0 +1,51 @@
+# ORBIT Prometheus scrape config — local dev only.
+# In prod, replace static_configs with EC2/ECS service discovery.
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    cluster: orbit-local
+    env: dev
+
+scrape_configs:
+  # ───── ORBIT user-facing services ─────
+  # Each app exposes /metrics on its own port. matcher and workers run
+  # tiny ops HTTP servers (separate from their main job) just for /metrics
+  # and /health.
+  #
+  # `host.docker.internal` resolves to the host machine from inside the
+  # prometheus container — Docker Desktop on macOS / Windows handles this
+  # automatically. On Linux you may need to add an extra_hosts entry to
+  # the prometheus service.
+  #
+  # NOTE: we deliberately do NOT set a `service` label on the targets here.
+  # Each app sets its own `service` default label via @orbit/observability's
+  # bindMetrics() (e.g. "orbit-api"). If we set one here Prometheus would
+  # overwrite the metric's own label and rename ours to `exported_service`,
+  # which breaks every `service=~"orbit-.*"` regex in the dashboards.
+
+  - job_name: orbit-api
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['host.docker.internal:3000']
+
+  - job_name: orbit-realtime
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['host.docker.internal:3001']
+
+  - job_name: orbit-matcher
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['host.docker.internal:3002']
+
+  - job_name: orbit-workers
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['host.docker.internal:3003']
+
+  # ───── Self-scrape ─────
+  - job_name: prometheus
+    static_configs:
+      - targets: ['localhost:9090']

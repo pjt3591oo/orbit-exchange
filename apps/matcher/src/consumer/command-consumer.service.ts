@@ -10,10 +10,13 @@ import {
   type TradeEvent,
   type UserEvent,
 } from '@orbit/shared';
+import { metrics, withKafkaContext } from '@orbit/observability';
 import { KafkaProducerService } from '../kafka/kafka-producer.service';
 import { MatchingEngineService } from '../matching/matching-engine.service';
 import { SettlerService } from '../settler/settler.service';
 import { SnapshotService } from '../snapshot/snapshot.service';
+
+const M = metrics.Metrics;
 
 /**
  * Single-consumer worker for the matcher process. Subscribes to the
@@ -52,7 +55,16 @@ export class CommandConsumerService implements OnModuleInit, OnModuleDestroy {
         fromBeginning: false,
       });
       await this.consumer.run({
-        eachMessage: (payload) => this.handleMessage(payload),
+        eachMessage: (payload) =>
+          withKafkaContext(
+            {
+              worker: 'orbit.matcher',
+              topic: payload.topic,
+              partition: payload.partition,
+              message: payload.message,
+            },
+            () => this.handleMessage(payload),
+          ),
       });
       this.log.log(`subscribed to ${KAFKA_TOPICS.ORDER_COMMANDS}`);
     } catch (err) {
@@ -83,25 +95,49 @@ export class CommandConsumerService implements OnModuleInit, OnModuleDestroy {
     // Serialize per market — this is the same lane the in-memory book uses,
     // so SUBMIT and CANCEL for the same symbol can never interleave.
     await this.matching.run(cmd.symbol, async () => {
+      const t0 = Date.now();
+      let result: 'ok' | 'noop' | 'error' = 'ok';
       try {
         if (cmd.type === 'SUBMIT') {
-          const result = await this.settler.settleSubmit(cmd);
-          if (!result) return;
-          await this.publishSubmitEvents(result.order, result.trades, cmd.symbol);
+          const settled = await this.settler.settleSubmit(cmd);
+          if (!settled) {
+            result = 'noop';
+            return;
+          }
+          await this.publishSubmitEvents(settled.order, settled.trades, cmd.symbol);
+          // Each filled trade increments the trade counter — labelled by taker side
+          for (const t of settled.trades) {
+            M.matcherTradesExecuted.inc({ market: cmd.symbol, taker_side: t.takerSide });
+          }
         } else if (cmd.type === 'CANCEL') {
-          const result = await this.settler.settleCancel(cmd);
-          if (!result) return;
-          await this.publishCancelEvents(result.order);
+          const settled = await this.settler.settleCancel(cmd);
+          if (!settled) {
+            result = 'noop';
+            return;
+          }
+          await this.publishCancelEvents(settled.order);
         }
         // Snapshot reflects post-match book. Throttled inside SnapshotService.
         this.snapshot.schedule(cmd.symbol);
         await this.publishOrderbookEvent(cmd.symbol);
+
+        // Update book-depth gauge (current level counts per side).
+        const ob = this.matching.getEngine(cmd.symbol).getOrderbook();
+        M.matcherBookLevels.set({ market: cmd.symbol, side: 'ASK' }, ob.asks.length);
+        M.matcherBookLevels.set({ market: cmd.symbol, side: 'BID' }, ob.bids.length);
       } catch (err) {
+        result = 'error';
         this.log.error(
           `command failed type=${cmd.type} order=${cmd.orderId} symbol=${cmd.symbol}: ${
             (err as Error).message
           }`,
         );
+      } finally {
+        M.matcherSettleDuration.observe(
+          { symbol: cmd.symbol, cmdType: cmd.type },
+          Date.now() - t0,
+        );
+        M.matcherCommandsConsumed.inc({ cmdType: cmd.type, result });
       }
     });
   }

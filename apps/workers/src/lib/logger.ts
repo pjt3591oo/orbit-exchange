@@ -1,11 +1,11 @@
 import pino from 'pino';
+import { pinoOtelMixin, pinoTransport } from '@orbit/observability';
 
 export const logger = pino({
   level: process.env.LOG_LEVEL ?? 'info',
-  transport:
-    process.env.NODE_ENV !== 'production'
-      ? { target: 'pino-pretty', options: { singleLine: true } }
-      : undefined,
+  // Inject OTel trace_id / span_id into every line.
+  mixin: pinoOtelMixin,
+  transport: pinoTransport('orbit-workers'),
 });
 
 export const childLogger = (name: string) => logger.child({ worker: name });

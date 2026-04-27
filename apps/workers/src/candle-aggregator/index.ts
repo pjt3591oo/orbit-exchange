@@ -6,12 +6,14 @@ import {
   KAFKA_TOPICS,
   type TradeEvent,
 } from '@orbit/shared';
+import { withKafkaContext } from '@orbit/observability';
 import { getKafka } from '../lib/kafka';
 import { childLogger } from '../lib/logger';
 
 type BucketKey = string; // `${market}:${openTimeSec}`
 
 const log = childLogger('candle-aggregator');
+const WORKER = 'candle-aggregator';
 
 /**
  * Aggregates M1 candles in memory and upserts once per second per dirty
@@ -68,7 +70,8 @@ export async function runCandleAggregator() {
   setInterval(() => { flush().catch(() => void 0); }, 1000).unref();
 
   await consumer.run({
-    eachMessage: async ({ message }) => {
+    eachMessage: ({ topic, partition, message }) =>
+      withKafkaContext({ worker: WORKER, topic, partition, message }, async () => {
       if (!message.value) return;
       const trade = JSON.parse(message.value.toString()) as TradeEvent;
       if (trade.type !== 'TRADE') return;
@@ -97,7 +100,7 @@ export async function runCandleAggregator() {
       b.close = price;
       b.volume = b.volume.add(qty);
       dirty.add(key);
-    },
+      }),
   });
 
   log.info('candle-aggregator running');

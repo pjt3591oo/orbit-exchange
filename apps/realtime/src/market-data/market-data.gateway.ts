@@ -10,8 +10,12 @@ import {
 } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
 import type Redis from 'ioredis';
+import { metrics } from '@orbit/observability';
 import { REDIS_SUB } from '../redis/redis.module';
 import { SnapshotCacheService } from './snapshot-cache.service';
+
+const M = metrics.Metrics;
+const NAMESPACE = 'market';
 
 /**
  * Socket.IO gateway for market-data push.
@@ -51,6 +55,8 @@ export class MarketDataGateway
       try {
         const payload = JSON.parse(message);
         this.server.to(room).emit(payload.kind, payload.data);
+        // payload.kind ∈ {trade | orderbook | candle}
+        M.realtimeRoomEmits.inc({ kind: String(payload.kind) });
       } catch (e) {
         this.log.warn(`pubsub decode err: ${(e as Error).message}`);
       }
@@ -60,10 +66,12 @@ export class MarketDataGateway
 
   handleConnection(client: Socket) {
     this.log.debug(`ws connect ${client.id}`);
+    M.realtimeConnections.inc({ namespace: NAMESPACE });
   }
 
   handleDisconnect(client: Socket) {
     this.log.debug(`ws disconnect ${client.id}`);
+    M.realtimeConnections.dec({ namespace: NAMESPACE });
   }
 
   /**

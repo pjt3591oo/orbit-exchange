@@ -1,0 +1,232 @@
+{
+  "panels": [
+    {
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops"
+        }
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 0
+      },
+      "id": 1,
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (market, side) (rate(orbit_orders_submitted_total{market=~\"$market\", result=\"ok\"}[1m]))",
+          "legendFormat": "{{market}} / {{side}}"
+        }
+      ],
+      "title": "Submit rate by market & side",
+      "type": "timeseries"
+    },
+    {
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops"
+        }
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 0
+      },
+      "id": 2,
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (result) (rate(orbit_orders_submitted_total{market=~\"$market\"}[1m]))",
+          "legendFormat": "{{result}}"
+        }
+      ],
+      "title": "Submit result breakdown (ok / 4xx / 5xx)",
+      "type": "timeseries"
+    },
+    {
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops"
+        }
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 8
+      },
+      "id": 3,
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (market, taker_side) (rate(orbit_trades_executed_total{market=~\"$market\"}[1m]))",
+          "legendFormat": "{{market}} / taker={{taker_side}}"
+        }
+      ],
+      "title": "Trades executed /s",
+      "type": "timeseries"
+    },
+    {
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops"
+        }
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 8
+      },
+      "id": 4,
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (origin) (rate(orbit_orders_cancelled_total{market=~\"$market\"}[1m]))",
+          "legendFormat": "{{origin}}"
+        }
+      ],
+      "title": "Cancellations (user vs admin force)",
+      "type": "timeseries"
+    },
+    {
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms"
+        }
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 16
+      },
+      "id": 5,
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "histogram_quantile(0.50, sum by (le, market) (rate(orbit_order_submit_duration_ms_bucket{market=~\"$market\"}[1m])))",
+          "legendFormat": "{{market}} p50"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "histogram_quantile(0.95, sum by (le, market) (rate(orbit_order_submit_duration_ms_bucket{market=~\"$market\"}[1m])))",
+          "legendFormat": "{{market}} p95"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "histogram_quantile(0.99, sum by (le, market) (rate(orbit_order_submit_duration_ms_bucket{market=~\"$market\"}[1m])))",
+          "legendFormat": "{{market}} p99"
+        }
+      ],
+      "title": "Submit latency p50/p95/p99 (ms)",
+      "type": "timeseries"
+    },
+    {
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        }
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 12,
+        "y": 16
+      },
+      "id": 6,
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "increase(orbit_frozen_blocks_total[5m])"
+        }
+      ],
+      "title": "Frozen-user blocks (5m)",
+      "type": "stat"
+    },
+    {
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        }
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 18,
+        "y": 16
+      },
+      "id": 7,
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum(increase(orbit_trades_executed_total{market=~\"$market\"}[15m]))"
+        }
+      ],
+      "title": "Total trades (15m)",
+      "type": "stat"
+    }
+  ],
+  "refresh": "10s",
+  "schemaVersion": 39,
+  "tags": [
+    "orbit",
+    "orders"
+  ],
+  "templating": {
+    "list": [
+      {
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        },
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "includeAll": true,
+        "multi": true,
+        "name": "market",
+        "query": "label_values(orbit_orders_submitted_total, market)",
+        "type": "query"
+      }
+    ]
+  },
+  "time": {
+    "from": "now-30m",
+    "to": "now"
+  },
+  "timezone": "browser",
+  "title": "ORBIT — Order Pipeline",
+  "uid": "orbit-pipeline"
+}

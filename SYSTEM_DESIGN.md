@@ -334,29 +334,73 @@ Route53 ─► CloudFront ─► S3 (web 정적 자산)
                                       ├── market-data-fanout  → ElastiCache (Redis publish)
                                       ├── notification        → SNS
                                       └── audit-logger        → S3 (Glacier 아카이브)
+
+   별도 도메인:
+   ├─► ALB(http, IP allowlist) ─► ECS Service: admin-web (CloudFront + WAF)
+   │                                   │ Keycloak OIDC redirect → admin@orbit.dev
+   │                                   └ /api/v1/admin/* (KeycloakAuthGuard) → api 와 같은 ECS task
+   │
+   ├─► ECS Service: keycloak           (Fargate, ≥2 task, RDS Postgres 백엔드)
+   │
+   └─► 관측 백플레인 (별도 VPC 권장):
+       ├── AMP (Amazon Managed Prometheus)  ◄── 각 서비스 remote-write (agent mode)
+       ├── Loki (S3 백엔드)                 ◄── promtail / Alloy 사이드카가 push
+       ├── Tempo (S3 백엔드)                ◄── 각 서비스 OTLP gRPC + metrics_generator → AMP
+       └── Grafana (Cloud or self-hosted)   ──► Keycloak OIDC 로그인
 ```
 
 | 서비스 | desiredCount | 상태성 | 비고 |
 |---|---|---|---|
-| `api` | ≥2 (auto scale) | stateless | ALB 라운드로빈, JWT는 Secrets Manager에서 시작 시 1회 로드 |
+| `api` | ≥2 (auto scale) | stateless | ALB 라운드로빈, JWT는 Secrets Manager에서 시작 시 1회 로드. 어드민 라우트 (`/api/v1/admin/*`) 도 같은 task — guard 단위로 분리 |
 | `realtime` | ≥2 | stateless | ALB sticky **또는** Socket.IO Redis adapter. ElastiCache 만 있으면 임의 노드 → 임의 노드 push 가능 |
 | `matcher` | **마켓 샤드당 1** | in-memory book = stateful | MSK consumer group 분할(`orbit.matcher.shard1` 등) + 토픽 파티션 키=symbol. 같은 symbol은 항상 같은 샤드로. 장애 시 ECS 재기동 → DB replay 로 5–30s 내 회복 |
 | `workers/*` | ≥2 per consumer group | stateless | Kafka 컨슈머 그룹 리밸런스로 노드 추가 시 파티션 자동 재분배 |
+| `keycloak` | ≥2 (cluster mode) | DB-backed | RDS Postgres 백엔드. realm-export 는 dev 시드용 — 운영은 `--import-realm` 빼고 콘솔/IaC 로 관리 |
+| `grafana` | ≥1 (or Cloud) | DB-backed | self-hosted 시 RDS Postgres 백엔드, anonymous 비활성, Keycloak OIDC 연동 |
 
 - WebSocket: ALB 의 WebSocket listener 사용 + sticky. realtime 의 다중화는 sticky 만으로도 충분하지만, sticky 없이도 동작하도록 **모든 fanout을 Redis pub/sub 으로 통일**해 둠 (`md:*`).
 - CI/CD: GitHub Actions → 4개 이미지 ECR push → `aws ecs update-service`. Web은 `s3 sync && cloudfront create-invalidation`.
 - IaC: `infra/terraform/` (또는 CDK). MVP 는 `docker-compose + LocalStack` 우선, IaC 는 skeleton.
 
-### 관측성
+### 관측성 (LGTM 스택)
 
-- Logger: `pino` JSON, 요청 `x-request-id`. 모든 서비스 동일. 프로덕션은 CloudWatch Logs로 전송.
-- Metrics: `/metrics` Prometheus 노출
-  - api: 주문 접수 지연, 잠금 트랜잭션 시간, Kafka publish 지연
-  - matcher: 명령 컨슈머 lag, 매칭 사이클 시간, 정산 트랜잭션 시간, in-memory book 깊이
-  - realtime: 동시 접속자 수, room 별 publish rate
-  - workers: 컨슈머 lag (그룹별), DLQ depth
-  - 모두 CloudWatch Custom Metric 으로 연동.
-- Tracing: OpenTelemetry → AWS X-Ray. trace context를 Kafka 메시지 헤더로 전파해 api → matcher → workers 까지 한 trace 로 본다.
+사용자 서비스 4개 (api · matcher · realtime · workers) 만 관측. 어드민 콘솔과 Keycloak 은 운영 외부 시스템으로 간주해 제외.
+
+```
+   ┌──── 사용자 서비스 ────┐
+   │  /metrics             │ ──pull──► Prometheus :9090 (15s scrape)
+   │  pino → stdout        │ ──push──► Loki :3100 (pino-loki transport, dev / promtail in prod)
+   │  OTel SDK             │ ──OTLP──► Tempo :4317
+   └───────────────────────┘                  │
+                                              └─► metrics_generator (service-graph + span-metrics)
+                                                  ──► Prometheus remote-write
+
+                  Grafana :3030 ─────► 3 datasource provisioning + log↔trace deep links
+```
+
+- **공유 패키지**: `packages/observability` 가 OTel SDK init / prom-client registry / pino mixin / `/metrics` 핸들러를 제공. 4개 앱이 `import { tracing, metrics, ... } from '@orbit/observability'` 한 줄로 사용.
+- **Logger**: `pino` JSON. mixin 이 active OTel context 의 `trace_id` / `span_id` 를 모든 라인에 자동 주입 → Loki 의 derived field 로 trace deep-link 자동 렌더.
+- **Metrics**: prom-client. 기본 Node 메트릭 (`process_*`, `nodejs_*`) + ORBIT 도메인 14개:
+  - api: `orbit_orders_submitted_total`, `orbit_order_submit_duration_ms`, `orbit_orders_cancelled_total`, `orbit_frozen_blocks_total`, `orbit_kafka_publish_duration_ms`
+  - matcher: `orbit_matcher_settle_duration_ms`, `orbit_matcher_queue_depth`, `orbit_orderbook_depth_levels`, `orbit_matcher_commands_consumed_total`, `orbit_trades_executed_total`
+  - realtime: `orbit_realtime_active_connections`, `orbit_realtime_room_emit_total`
+  - workers: `orbit_worker_messages_processed_total`, `orbit_worker_handler_duration_ms`
+  - **카디널리티 통제**: 라벨에 `userId` 같은 high-cardinality 값 절대 금지. 메트릭 정의 시 `labelNames` 를 의도적으로 좁게.
+- **Tracing**: OpenTelemetry. auto-instrumentation 으로 HTTP / Prisma / kafkajs / ioredis 의 span 자동 생성. trace context 가 **Kafka 메시지 헤더로 전파** 되어 api → matcher → workers 한 trace 로 묶임. 단, kafkajs auto-instrumentation 은 *producer 측 traceparent inject* 만 자동이고 *consumer 측 핸들러 활성화* 는 자동 안 됨 — `@orbit/observability/withKafkaContext` 헬퍼로 매처와 모든 워커의 `eachMessage` 를 wrap 해서 span chain 을 끊지 않음. **새 Kafka 컨슈머 추가 시 반드시 이 헬퍼로 감싸야 service map 에 edge 가 그려짐.**
+- **`/metrics` 노출**:
+  - api / realtime: 자체 HTTP 서버에 path 만 마운트 (`:3000/metrics`, `:3001/metrics`)
+  - matcher / workers: HTTP 가 본질이 아니라 **별도 ops HTTP 서버** 를 작은 포트 (`:3002`, `:3003`) 에 띄움 — `/metrics` + `/health` 만 서빙
+- **Grafana 대시보드**: `infra/grafana/dashboards/*.json` **5종** 이 부팅 시 자동 provisioning (Service Overview / Order Pipeline / Matcher Internals / Kafka & Workers / Service Map). UI 편집 후 `pnpm grafana:export` 로 파일에 round-trip → git 보존.
+- **Service Graph**: Tempo `metrics_generator` 가 span 의 parent-child 관계로 서비스 간 호출 그래프 자동 생성. `orbit-service-map` 대시보드의 NodeGraph 패널에서 항상 보이고, Explore → Tempo → Service Graph 탭에서도 동일.
+
+### 운영 전환
+
+- **Grafana** → Grafana Cloud 또는 자체 운영 (anonymous Admin 비활성, Keycloak OIDC 연동)
+- **Prometheus** → AMP (Amazon Managed Prometheus) 권장. agent mode + remote-write
+- **Loki** → S3 백엔드 + 7d hot / Glacier 아카이브
+- **Tempo** → S3 백엔드. metrics_generator → AMP remote-write
+- **OTel sampling** → `OTEL_TRACES_SAMPLER_ARG=0.01` (dev 100% / prod 1%). 에러 보존이 중요하면 OTel Collector 의 tail sampler 도입
+- **로그 수집** → pino-loki transport (현재 dev 방식) 대신 promtail / Grafana Alloy 사이드카로 (앱 크래시 시 마지막 buffer 유실 방지)
 
 ### 확장 지점
 
