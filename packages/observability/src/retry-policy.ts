@@ -45,6 +45,34 @@ const DEFAULT_RETRY_TOPIC = 'orbit.retry.30s.v1';
 const DEFAULT_DLQ_TOPIC = 'orbit.dlq.v1';
 const DEFAULT_RETRY_DELAY_MS = 30_000;
 
+/**
+ * Per-process map of in-flight kafkajs retries, keyed by
+ * `<worker>:<topic>:<partition>:<offset>`.
+ *
+ * Why we need this: kafkajs re-consumes a message when `eachMessage`
+ * throws, but it does NOT mutate the message headers between retries.
+ * Without an external counter, `parseAttempt(ctx.message)` always reads
+ * `x-orbit-attempt: 0` for the same message and the in-flight check
+ * `attempt < inFlight` stays true forever — infinite loop, escalation
+ * never fires.
+ *
+ * The map entry is removed on:
+ *   - successful handler return (the message is fine, no follow-up needed)
+ *   - escalation to retry-30s / DLQ (the offset will advance and we'll
+ *     never see this exact (topic, partition, offset) tuple again on this
+ *     consumer)
+ *
+ * Bound: |map| ≤ |currently-failing messages|. Realistic upper bound
+ * during a brief outage = consumer batch size × per-partition concurrency,
+ * so a few thousand keys at most.
+ *
+ * Process restart: counter resets — that is OK. After restart the message
+ * gets one fresh round of in-flight retries before escalating, which is
+ * the desired behaviour (a process restart is itself a "transient" event
+ * the operator might want to ride through).
+ */
+const inflightCount = new Map<string, number>();
+
 export interface RetryPolicyConfig {
   /** Worker name for metric labels and DLQ provenance. */
   worker: string;
@@ -89,18 +117,45 @@ export async function withRetryPolicy<T>(
   const retryDelayMs = cfg.retryDelayMs ?? DEFAULT_RETRY_DELAY_MS;
   const classify = cfg.classify ?? defaultClassify;
 
+  // Stable identity for this specific (topic, partition, offset) on this
+  // worker. Cross-worker isolation is via the worker prefix — two
+  // different workers consuming the same topic each get their own count.
+  const attemptKey = `${cfg.worker}:${ctx.topic}:${ctx.partition}:${ctx.message.offset}`;
+  // `headerAttempt` accumulates ACROSS escalations (main → retry-30s →
+  // main again). `memCount` accumulates WITHIN a single topic stay.
+  // Both are summed below for the in-flight budget check.
+  const headerAttempt = parseAttempt(ctx.message);
+
   try {
-    return await fn();
+    const result = await fn();
+    // Success — clear the in-flight counter so the next failure on this
+    // (offset) starts fresh. If the same offset never re-appears (normal
+    // path), the entry is removed here on first success.
+    inflightCount.delete(attemptKey);
+    return result;
   } catch (err) {
-    const attempt = parseAttempt(ctx.message);
-    if (attempt < inFlight) {
-      // Still in-flight retry budget — let kafkajs re-consume.
+    const memCount = inflightCount.get(attemptKey) ?? 0;
+    const totalAttempts = memCount + headerAttempt;
+
+    if (totalAttempts < inFlight) {
+      // Still in-flight retry budget — bump the counter and re-throw so
+      // kafkajs re-consumes the same offset.
+      inflightCount.set(attemptKey, memCount + 1);
       Metrics.workerRetryEnqueued.inc({ worker: cfg.worker, target: 'inflight' });
       throw err;
     }
 
+    // Budget exhausted — escalate.
+    inflightCount.delete(attemptKey);
+
     const errKind = classify(err);
-    const target = errKind === 'transient' ? retryTopic : dlqTopic;
+    // First escalation of a transient error: retry-30s (give it 30s + a
+    // fresh in-flight budget). Subsequent escalation (header already
+    // bumped, meaning this message has cycled through retry-30s once and
+    // came back failing): straight to DLQ. Permanent errors always go
+    // direct to DLQ regardless of headerAttempt.
+    const target =
+      errKind === 'transient' && headerAttempt === 0 ? retryTopic : dlqTopic;
     const retryAfter = target === retryTopic ? Date.now() + retryDelayMs : undefined;
 
     try {
@@ -115,7 +170,13 @@ export async function withRetryPolicy<T>(
               'x-orbit-original-topic': ctx.topic,
               'x-orbit-original-partition': String(ctx.partition),
               'x-orbit-original-offset': ctx.message.offset,
-              'x-orbit-attempt': String(attempt + 1),
+              // Total cycles this message has been through (including the
+              // one we're now escalating from). retry-30s republishes
+              // preserve this header so a subsequent failure on the
+              // original topic sees a non-zero header and goes straight
+              // to DLQ via the `errKind === 'transient' && header > 0`
+              // dance below.
+              'x-orbit-attempt': String(totalAttempts + 1),
               'x-orbit-last-error': truncate(formatError(err), 1000),
               'x-orbit-worker': cfg.worker,
               ...(retryAfter ? { 'x-orbit-retry-after': String(retryAfter) } : {}),

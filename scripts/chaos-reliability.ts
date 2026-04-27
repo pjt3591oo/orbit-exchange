@@ -25,6 +25,16 @@
  *      3. assert orbit_dedupe_hit_total{worker="notification"} increased
  *         (the second delivery was caught by withDedupe)
  *
+ *   C. DLQ END-TO-END — withRetryPolicy → retry-30s → DLQ → DlqEvent
+ *      1. snapshot DlqEvent count
+ *      2. `docker stop orbit-localstack` (kills SNS)
+ *      3. publish a UserEvent → notification handler fails (ECONNREFUSED)
+ *      4. wait ~50s for the in-flight retries → retry-30s republish
+ *         → second failure → DLQ topic → dlq-monitor → DlqEvent INSERT
+ *      5. assert DlqEvent count grew + the new row carries the right
+ *         worker / lastError / attempt
+ *      6. `docker start orbit-localstack` (operator recovery)
+ *
  * Pre-conditions: same as smoke-reliability + the user has docker access
  * to start/stop containers.
  *
@@ -57,7 +67,9 @@ interface Cfg {
   fundBtc: string;
   kafkaContainer: string;
   kafkaBrokers: string[];
+  localstackContainer: string;
   drainTimeoutMs: number;
+  dlqTimeoutMs: number;
   scenarios: Set<string>;
 }
 
@@ -70,7 +82,11 @@ const CFG: Cfg = {
   fundBtc: process.env.FUND_BTC ?? '5',
   kafkaContainer: process.env.KAFKA_CONTAINER ?? 'orbit-redpanda',
   kafkaBrokers: (process.env.KAFKA_BROKERS ?? 'localhost:9092').split(','),
+  localstackContainer: process.env.LOCALSTACK_CONTAINER ?? 'orbit-localstack',
   drainTimeoutMs: Number(process.env.DRAIN_TIMEOUT_MS ?? 60_000),
+  // Default chosen so retry-30s (30s) + the in-flight kafkajs retries +
+  // dlq-monitor consume + DB insert all fit comfortably.
+  dlqTimeoutMs: Number(process.env.DLQ_TIMEOUT_MS ?? 90_000),
   scenarios: new Set(
     (process.env.SCENARIOS ?? 'A,B').split(',').map((s) => s.trim().toUpperCase()),
   ),
@@ -105,6 +121,9 @@ async function main() {
   }
   if (CFG.scenarios.has('B')) {
     await scenarioB_DedupeReplay(prisma, token);
+  }
+  if (CFG.scenarios.has('C')) {
+    await scenarioC_DlqEndToEnd(prisma);
   }
 
   await prisma.$disconnect();
@@ -318,6 +337,128 @@ async function scenarioB_DedupeReplay(
   // Kafka in this scenario, but accept the same signature for symmetry
   // with scenario A.
   void token;
+}
+
+/* ───────────────── scenario C — DLQ end-to-end ───────────────── */
+
+async function scenarioC_DlqEndToEnd(prisma: InstanceType<typeof PrismaClient>) {
+  header('C. DLQ end-to-end — SNS down → withRetryPolicy → retry-30s → DLQ');
+
+  // 1. Baseline DlqEvent count for the (worker=notification) bucket.
+  const beforeCount = await prisma.dlqEvent.count({ where: { worker: 'notification' } });
+  console.log(`  baseline DlqEvent{worker=notification} = ${beforeCount}`);
+
+  // 2. Take SNS offline. Notification worker is initialised at startup
+  //    with the SNS endpoint URL, so killing localstack causes
+  //    ECONNREFUSED on every PublishCommand. The aws-sdk error is
+  //    classified `transient` by withRetryPolicy → retry-30s on first
+  //    escalation → retry-30s republish → second escalation → DLQ.
+  console.log(`  stopping ${CFG.localstackContainer}…`);
+  docker(['stop', CFG.localstackContainer]);
+  await sleep(2_000);
+
+  // 3. Forge a UserEvent with a unique eventId so withDedupe doesn't
+  //    short-circuit. Publish directly to Kafka (we don't need to go
+  //    through outbox for this test).
+  const eventId = randomUUID();
+  const evt = {
+    v: 1,
+    eventId,
+    userId: 'chaos-c-' + eventId.slice(0, 8),
+    type: 'ORDER_FILLED',
+    payload: { orderId: 'chaos-c', market: CFG.market, price: '50000000', quantity: '0.001' },
+    ts: Date.now(),
+  };
+  const kafka = new Kafka({ clientId: 'orbit-chaos-c', brokers: CFG.kafkaBrokers });
+  const producer = kafka.producer({ allowAutoTopicCreation: true });
+  await producer.connect();
+  await producer.send({
+    topic: 'orbit.user-events.v1',
+    compression: CompressionTypes.GZIP,
+    messages: [{ key: evt.userId, value: JSON.stringify(evt) }],
+  });
+  await producer.disconnect();
+  record('UserEvent published with SNS offline', true, `eventId=${eventId}`);
+
+  // 4. Wait for the full retry → DLQ cycle. The retry-30s tier adds
+  //    ~30s, plus a few seconds for kafkajs delivery + handler runtime.
+  console.log(`  waiting up to ${CFG.dlqTimeoutMs}ms for DLQ to be populated…`);
+  const reachedDlq = await waitForDlqMatchingEvent(
+    prisma,
+    'notification',
+    CFG.dlqTimeoutMs,
+    beforeCount,
+  );
+  record(
+    `DlqEvent row appears within ${CFG.dlqTimeoutMs}ms`,
+    reachedDlq.found,
+    reachedDlq.found
+      ? `id=${reachedDlq.row?.id} attempt=${reachedDlq.row?.attempt} originalTopic=${reachedDlq.row?.originalTopic}`
+      : 'still empty after timeout',
+  );
+  if (reachedDlq.found && reachedDlq.row) {
+    record(
+      'DlqEvent.lastError is non-empty',
+      typeof reachedDlq.row.lastError === 'string' && reachedDlq.row.lastError.length > 0,
+      reachedDlq.row.lastError.slice(0, 80),
+    );
+    record(
+      'DlqEvent.attempt > 0',
+      reachedDlq.row.attempt > 0,
+      `attempt=${reachedDlq.row.attempt}`,
+    );
+    record(
+      'DlqEvent.originalTopic = orbit.user-events.v1',
+      reachedDlq.row.originalTopic === 'orbit.user-events.v1',
+      reachedDlq.row.originalTopic,
+    );
+  }
+
+  // 5. Restore localstack so subsequent tests / dev work continue normally.
+  console.log(`  starting ${CFG.localstackContainer}…`);
+  docker(['start', CFG.localstackContainer]);
+  await waitForContainerHealthy(CFG.localstackContainer, 60_000);
+  record('localstack healthy after recovery', true);
+}
+
+interface DlqRow {
+  id: bigint;
+  worker: string;
+  originalTopic: string;
+  attempt: number;
+  lastError: string;
+}
+
+async function waitForDlqMatchingEvent(
+  prisma: InstanceType<typeof PrismaClient>,
+  worker: string,
+  timeoutMs: number,
+  beforeCount: number,
+): Promise<{ found: boolean; row: DlqRow | null }> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const count = await prisma.dlqEvent.count({ where: { worker } });
+    if (count > beforeCount) {
+      const row = await prisma.dlqEvent.findFirst({
+        where: { worker },
+        orderBy: { id: 'desc' },
+      });
+      if (row) {
+        return {
+          found: true,
+          row: {
+            id: row.id,
+            worker: row.worker,
+            originalTopic: row.originalTopic,
+            attempt: row.attempt,
+            lastError: row.lastError,
+          },
+        };
+      }
+    }
+    await sleep(1_000);
+  }
+  return { found: false, row: null };
 }
 
 async function readMetric(url: string, re: RegExp): Promise<number> {
