@@ -40,14 +40,29 @@ export function OrderbookPanel({
     };
   }, [symbol]);
 
+  // Display cap. Korean exchange convention is 15 levels per side; this also
+  // matches the visible-without-scrolling budget given the orderbook's grid
+  // track height. Anything beyond gets clipped — `justifyContent: flex-end`
+  // on asks anchors the best (lowest) asks just above the mid bar, and bids
+  // anchor to the top so the best (highest) bid sits right below mid. The
+  // levels that get clipped are always the LEAST informative (farthest from
+  // mid), so the clip is intentional, not lossy.
+  const VISIBLE_LEVELS = 15;
+
   // asks: descending (high→low) so top row is the highest ask, bottom row (just above mid) is the best (lowest) ask.
   // bids: descending too — the best (highest) bid sits right below mid.
   const asks = useMemo(
-    () => [...snap.asks].sort((a, b) => Number(b.price) - Number(a.price)),
+    () =>
+      [...snap.asks]
+        .sort((a, b) => Number(b.price) - Number(a.price))
+        .slice(-VISIBLE_LEVELS), // last N = best (lowest) asks near mid
     [snap.asks],
   );
   const bids = useMemo(
-    () => [...snap.bids].sort((a, b) => Number(b.price) - Number(a.price)),
+    () =>
+      [...snap.bids]
+        .sort((a, b) => Number(b.price) - Number(a.price))
+        .slice(0, VISIBLE_LEVELS), // first N = best (highest) bids near mid
     [snap.bids],
   );
   const mid =
@@ -84,7 +99,7 @@ export function OrderbookPanel({
         onClick={() => onPickPrice(r.price)}
         style={{
           position: 'relative',
-          height: 22,
+          height: 24,
           cursor: 'pointer',
           fontFamily: 'var(--font-num)',
           fontVariantNumeric: 'tabular-nums',
@@ -109,7 +124,7 @@ export function OrderbookPanel({
             display: 'grid',
             gridTemplateColumns: '1fr 1fr 1fr',
             alignItems: 'center',
-            padding: '0 10px',
+            padding: '0 12px',
           }}
         >
           <span style={{ color: col, fontWeight: 600 }}>{fmtNum(r.price, dig)}</span>
@@ -142,7 +157,7 @@ export function OrderbookPanel({
         style={{
           display: 'grid',
           gridTemplateColumns: '1fr 1fr 1fr',
-          padding: '6px 10px',
+          padding: '8px 12px',
           fontSize: 10,
           color: T.text3,
           fontWeight: 600,
@@ -155,8 +170,30 @@ export function OrderbookPanel({
         <span style={{ textAlign: 'right' }}>합계</span>
       </div>
 
-      <div style={{ flex: 1, overflow: 'auto', display: 'flex', flexDirection: 'column' }}>
-        <div>
+      {/*
+        Layout: asks (top half) / mid bar (fixed) / bids (bottom half).
+        Each side gets `flex: 1` so they split available height 50/50 — mid
+        bar stays at the visual center regardless of how many levels are
+        loaded. Asks anchor to the bottom (`justifyContent: flex-end`) so
+        the best ask sits right above the mid bar; bids anchor to the top
+        (default) so the best bid sits right below.
+
+        Outer container is `overflow: hidden` as a safety net for tiny
+        viewports, but the parent grid (TradePage desktop) gives this
+        panel both rows of the layout — ~800px+ vertical real estate —
+        so 15 + 15 levels at 24px row height + chrome (~80px) all fit
+        without clipping in normal use. No scrollbars, no clipping.
+      */}
+      <div style={{ flex: 1, minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+        <div
+          style={{
+            flex: 1,
+            minHeight: 0,
+            display: 'flex',
+            flexDirection: 'column',
+            justifyContent: 'flex-end',
+          }}
+        >
           {asks.map((r, i) => {
             const pct = totalAskQty > 0 ? (Number(r.quantity) / totalAskQty) * 100 : 0;
             return <Row key={'a' + i} side="ask" r={r} pct={pct} />;
@@ -164,10 +201,11 @@ export function OrderbookPanel({
         </div>
         <div
           style={{
+            flexShrink: 0,
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'space-between',
-            padding: '8px 10px',
+            padding: '10px 12px',
             borderTop: `1px solid ${T.borderSoft}`,
             borderBottom: `1px solid ${T.borderSoft}`,
             background: T.bgAlt,
@@ -188,7 +226,7 @@ export function OrderbookPanel({
             {mid != null ? `≈ ${quoteAsset === 'KRW' ? '₩' : ''}${fmtNum(mid, 0)}` : ''}
           </span>
         </div>
-        <div>
+        <div style={{ flex: 1, minHeight: 0 }}>
           {bids.map((r, i) => {
             const pct = totalBidQty > 0 ? (Number(r.quantity) / totalBidQty) * 100 : 0;
             return <Row key={'b' + i} side="bid" r={r} pct={pct} />;

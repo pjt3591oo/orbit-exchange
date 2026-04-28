@@ -114,14 +114,22 @@ export function TradePage() {
             flex: 1,
             display: 'grid',
             gridTemplateColumns: 'minmax(0,1fr) 280px 260px',
-            gridTemplateRows: '1fr 220px',
+            // `minmax(0, 1fr)` on rows — without the explicit `0` minimum,
+            // the track refuses to shrink below the largest grid item's
+            // min-content height. Once the orderbook fills with 30+ rows
+            // (~660px of intrinsic height) the track grows to fit them,
+            // pushing the bottom tabs off-screen and visibly oscillating
+            // the orderbook height between empty and full states. The
+            // matching columns line above already uses `minmax(0,1fr)`;
+            // this pattern just extends it to rows.
+            gridTemplateRows: 'minmax(0, 1fr) 220px',
             gap: 1,
             background: T.border,
             minHeight: 0,
             overflow: 'hidden',
           }}
         >
-          <div style={{ gridRow: '1 / 2', display: 'grid', gridTemplateRows: '1fr 180px', gap: 1, background: T.border, minHeight: 0 }}>
+          <div style={{ gridRow: '1 / 2', display: 'grid', gridTemplateRows: 'minmax(0, 1fr) 180px', gap: 1, background: T.border, minHeight: 0 }}>
             <ChartPanel symbol={symbol} />
             <TradesPanel symbol={symbol} />
           </div>
@@ -149,21 +157,34 @@ export function TradePage() {
           flex: 1,
           display: 'grid',
           gridTemplateColumns: '260px minmax(0,1fr) 320px 300px',
-          gridTemplateRows: '1fr 260px',
+          // `minmax(0, 1fr)` on rows. See tablet variant above for the full
+          // explanation — same fix, same reason: prevent grid track from
+          // growing to fit the orderbook's min-content.
+          gridTemplateRows: 'minmax(0, 1fr) 260px',
           gap: 1,
           background: T.border,
           minHeight: 0,
           overflow: 'hidden',
         }}
       >
-        <div style={{ gridRow: '1 / 2' }}>
+        {/*
+          Desktop layout — Binance/Upbit-style "orderbook spans full height".
+          The orderbook (col 3) and order form (col 4) span both rows so they
+          get the FULL vertical real estate — enough to render 15+15 levels
+          without clipping or scrolling. The market list (col 1) also spans
+          both rows for visual symmetry. The bottom tabs (open orders /
+          history / assets) sit only under the chart column (col 2), since
+          those tables are conceptually paired with the chart, not with the
+          orderbook.
+        */}
+        <div style={{ gridRow: '1 / 3', minHeight: 0 }}>
           <MarketList selected={symbol} />
         </div>
         <div
           style={{
             gridRow: '1 / 2',
             display: 'grid',
-            gridTemplateRows: '1fr 200px',
+            gridTemplateRows: 'minmax(0, 1fr) 200px',
             gap: 1,
             background: T.border,
             minHeight: 0,
@@ -172,13 +193,13 @@ export function TradePage() {
           <ChartPanel symbol={symbol} />
           <TradesPanel symbol={symbol} />
         </div>
-        <div style={{ gridRow: '1 / 2' }}>
+        <div style={{ gridRow: '1 / 3', minHeight: 0 }}>
           <OrderbookPanel symbol={symbol} quoteAsset={quoteAsset} onPickPrice={handlePickPrice} />
         </div>
-        <div style={{ gridRow: '1 / 2' }}>
+        <div style={{ gridRow: '1 / 3', minHeight: 0 }}>
           <OrderForm symbol={symbol} pickedPrice={pickedPrice} />
         </div>
-        <div style={{ gridColumn: '1 / -1', gridRow: '2 / 3' }}>
+        <div style={{ gridColumn: '2 / 3', gridRow: '2 / 3', minHeight: 0 }}>
           <BottomTabs symbol={symbol} />
         </div>
       </div>
