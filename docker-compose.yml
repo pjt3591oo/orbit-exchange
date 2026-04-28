@@ -121,12 +121,13 @@ services:
       postgres:
         condition: service_healthy
     healthcheck:
-      # Keycloak 25 exposes /health/ready on the management interface (9000)
-      # but for simplicity we hit the OIDC discovery endpoint which proves
-      # the realm is loaded.
+      # Keycloak 25 image (UBI-Micro) ships bash but NOT curl/wget. We use
+      # bash's built-in /dev/tcp redirection to hit the management interface
+      # (port 9000) /health/ready endpoint. The `--health-enabled=true`
+      # command flag above is what exposes this endpoint.
       test:
         - CMD-SHELL
-        - "curl -fsS http://localhost:8080/realms/orbit/.well-known/openid-configuration > /dev/null"
+        - 'bash -c ''exec 3<>/dev/tcp/localhost/9000 && printf "GET /health/ready HTTP/1.0\r\nHost: localhost\r\n\r\n" >&3 && head -c 16 <&3 | grep -q "200 OK"'''
       interval: 10s
       timeout: 5s
       retries: 30
